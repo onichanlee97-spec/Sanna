@@ -26,18 +26,12 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew || true
 
-      - name: Decode or Generate Keystore
+      - name: Generate Fresh Debug Keystore
         run: |
-          if [ -f "debug.keystore.base64" ]; then
-            echo "Decoding debug.keystore.base64..."
-            base64 -d debug.keystore.base64 > debug.keystore
-          elif [ -n "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" ]; then
-            echo "Decoding DEBUG_KEYSTORE_BASE64 secret..."
-            echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > debug.keystore
-          else
-            echo "Keystore not found, generating temporary debug keystore..."
-            keytool -genkey -v -keystore debug.keystore -storepass androiddebugkey -alias androiddebugkey -keypass androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          fi
+          echo "Removing any existing keystore to prevent password mismatch..."
+          rm -f debug.keystore
+          echo "Generating temporary debug keystore..."
+          keytool -genkey -v -keystore debug.keystore -storepass androiddebugkey -alias androiddebugkey -keypass androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace || gradle assembleDebug --stacktrace
