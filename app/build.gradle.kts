@@ -52,6 +52,7 @@ android {
   }
   kotlinOptions {
     jvmTarget = "11"
+    freeCompilerArgs += listOf("-language-version", "2.0")
   }
   buildFeatures {
     compose = true
