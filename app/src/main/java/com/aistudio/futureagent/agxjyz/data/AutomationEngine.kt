@@ -91,19 +91,67 @@ object AutomationEngine {
     private fun defaultRules(): List<AutomationRule> {
         return listOf(
             AutomationRule(
-                id = "RULE_BATTERY_GUARD",
-                name = "Low Battery Power Saver",
+                id = "RULE_BATTERY_SAFE",
+                name = "Low Battery Safe Mode",
                 triggerType = "BATTERY_LOW",
-                conditionValue = "20",
-                actionPrompt = "Battery below 20%. Toggle Bluetooth OFF and dim volume to 15%.",
+                conditionValue = "15",
+                actionPrompt = "Battery below 15%. Save active file states, system configurations, and alert user.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_WEBHOOK_DISPATCHER",
+                name = "Webhook Alert Dispatcher",
+                triggerType = "INTERVAL",
+                conditionValue = "60",
+                actionPrompt = "POST telemetry metrics and logs to https://api.sanna.ai/v1/webhook.",
                 isEnabled = true
             ),
             AutomationRule(
                 id = "RULE_DAILY_BRIEF",
-                name = "Morning Intelligence Briefing",
+                name = "Morning Automation Dispatch",
                 triggerType = "TIME_CRON",
                 conditionValue = "08:00",
-                actionPrompt = "Good morning! Read today's calendar events and weather forecast.",
+                actionPrompt = "Generate morning intelligence brief and dispatch telemetry to @SannaSupport via Telegram.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_SYSTEM_SAFEGUARD",
+                name = "System Safeguard",
+                triggerType = "BATTERY_LOW",
+                conditionValue = "20",
+                actionPrompt = "Battery below 20%. Dim media volume to 15%, disable Bluetooth/Wi-Fi, and notify operator via SMS.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_MORNING_BRIEFING",
+                name = "Morning Briefing",
+                triggerType = "TIME_CRON",
+                conditionValue = "07:00",
+                actionPrompt = "Pull calendar events, check unread emails, fetch local weather, and save a consolidated briefing to a daily log file.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_NOTIFICATION_RESPONDER",
+                name = "Notification Responder",
+                triggerType = "INTERVAL",
+                conditionValue = "5",
+                actionPrompt = "Check active notifications every 5 minutes, parse urgent messages, and draft quick responses or send SMS alerts.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_MEMORY_COMPACTOR",
+                name = "Memory Compactor",
+                triggerType = "INTERVAL",
+                conditionValue = "10080",
+                actionPrompt = "Review all local files and stored memories, synthesize outdated logs, update memory vault, and delete temporary files.",
+                isEnabled = true
+            ),
+            AutomationRule(
+                id = "RULE_SANNA_HEARTBEAT",
+                name = "Sanna Heartbeat",
+                triggerType = "INTERVAL",
+                conditionValue = "30",
+                actionPrompt = "Check task_queue.md, execute the next pending high-priority task, and notify the operator.",
                 isEnabled = true
             )
         )

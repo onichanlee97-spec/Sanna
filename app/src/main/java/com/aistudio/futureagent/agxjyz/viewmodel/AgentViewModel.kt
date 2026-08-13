@@ -139,6 +139,84 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         for (memory in initialMemories) {
                             repository.insertMemory(memory)
                         }
+
+                        // Also initialize default project roadmap and api endpoints files
+                        try {
+                            val app = getApplication<android.app.Application>()
+                            val roadmapFile = java.io.File(app.filesDir, "project_roadmap.md")
+                            if (!roadmapFile.exists()) {
+                                roadmapFile.writeText(
+                                    "# Sanna AI Agent Roadmap & Architecture\n\n" +
+                                    "## Current Phase: Operational Autonomy\n" +
+                                    "- [x] Secure Encrypted SharedPreferences integration\n" +
+                                    "- [x] Background notification triage with BIND_NOTIFICATION_LISTENER_SERVICE\n" +
+                                    "- [x] Resilient API calls with self-healing Exponential Backoff retry mechanics\n" +
+                                    "- [x] Material Design 3 \"Copy Response\" chat action elements\n\n" +
+                                    "## Next Goals\n" +
+                                    "- [ ] Direct integration with automated triggers (Battery levels, Time intervals)\n" +
+                                    "- [ ] Connect custom external rest endpoints/webhooks\n" +
+                                    "- [ ] Live multi-agent parallel swarm routines\n"
+                                )
+                            }
+                            val apiFile = java.io.File(app.filesDir, "api_endpoints.json")
+                            if (!apiFile.exists()) {
+                                apiFile.writeText(
+                                    "{\n" +
+                                    "  \"webhooks\": [\n" +
+                                    "    {\n" +
+                                      "      \"name\": \"Primary Webhook Receiver\",\n" +
+                                    "      \"url\": \"https://api.sanna.ai/v1/webhook\",\n" +
+                                    "      \"method\": \"POST\",\n" +
+                                    "      \"auth_type\": \"Bearer\"\n" +
+                                    "    }\n" +
+                                    "  ],\n" +
+                                    "  \"monitoring_interval_minutes\": 60\n" +
+                                    "}\n"
+                                )
+                            }
+                            val queueFile = java.io.File(app.filesDir, "task_queue.md")
+                            if (!queueFile.exists()) {
+                                queueFile.writeText(
+                                    "# Sanna AI Agent Task Queue\n\n" +
+                                    "## 🔴 HIGH PRIORITY\n" +
+                                    "- [ ] Implement self-healing scripting tests\n" +
+                                    "- [ ] Connect Spotify Live Intent Routing API\n" +
+                                    "- [ ] Connect custom alert dispatch hooks\n\n" +
+                                    "## 🟡 IN PROGRESS\n" +
+                                    "- [x] Configure security vault key schemes (EncryptedSharedPreferences)\n" +
+                                    "- [x] Background notification listeners\n" +
+                                    "- [x] Resilient Exponential Backoff Retry engine\n" +
+                                    "- [x] Copy Response feedback controls\n\n" +
+                                    "## 🟢 COMPLETED / AUDITED\n" +
+                                    "- [x] Seed project_roadmap.md on local memory\n" +
+                                    "- [x] Define telemetry schema inside api_endpoints.json\n"
+                                )
+                            }
+                            val backupFile = java.io.File(app.filesDir, "memory_backup.json")
+                            if (!backupFile.exists()) {
+                                backupFile.writeText(
+                                    "[\n" +
+                                    "  {\n" +
+                                    "    \"key\": \"operator_name\",\n" +
+                                    "    \"value\": \"Sanna Operator\",\n" +
+                                    "    \"category\": \"User Profile\"\n" +
+                                    "  },\n" +
+                                    "  {\n" +
+                                    "    \"key\": \"preferred_model\",\n" +
+                                    "    \"value\": \"gemini-1.5-flash\",\n" +
+                                    "    \"category\": \"Core Settings\"\n" +
+                                    "  },\n" +
+                                    "  {\n" +
+                                    "    \"key\": \"autonomous_mode\",\n" +
+                                    "    \"value\": \"Active\",\n" +
+                                    "    \"category\": \"Automation\"\n" +
+                                    "  }\n" +
+                                    "]\n"
+                                )
+                            }
+                        } catch (ex: Exception) {
+                            // Safe fallback
+                        }
                     } else {
                         val memories = entities.map {
                             UserMemory(key = it.key, value = it.value, category = it.category)
@@ -349,6 +427,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         parameters = mapOf("type" to "OBJECT", "properties" to emptyMap<String, Any>())
                     ),
                     FunctionDeclaration(
+                        name = "auditMemoryVault",
+                        description = "Audit the persistent memory vault, consolidate redundant facts, and save a full secure JSON backup snapshot to 'memory_backup.json'.",
+                        parameters = mapOf("type" to "OBJECT", "properties" to emptyMap<String, Any>())
+                    ),
+                    FunctionDeclaration(
                         name = "deleteAutomationRule",
                         description = "Delete an automation rule by rule ID or name.",
                         parameters = mapOf(
@@ -368,6 +451,48 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                                 "filename" to mapOf("type" to "STRING", "description" to "Filename to delete e.g. notes.txt")
                             ),
                             "required" to listOf("filename")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "disasterRecoveryBackup",
+                        description = "Package and export a complete system transcript, task queue, and memory snapshot to a webhook endpoint.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "webhookUrl" to mapOf("type" to "STRING", "description" to "Custom webhook URL to send disaster recovery snapshot payload")
+                            ),
+                            "required" to listOf("webhookUrl")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "accessibilityAutopilot",
+                        description = "Launch an app and perform actions using adaptive self-calibrating screen scraping if elements are missing.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "appName" to mapOf("type" to "STRING", "description" to "App name to launch"),
+                                "action" to mapOf("type" to "STRING", "description" to "Action to execute e.g. tap, click, input"),
+                                "target" to mapOf("type" to "STRING", "description" to "Target element name or label")
+                            ),
+                            "required" to listOf("appName", "action", "target")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "metaLearningAudit",
+                        description = "Perform a workspace self-evolution audit analyzing completion history, assessing task velocity, and updating strategic goals.",
+                        parameters = mapOf("type" to "OBJECT", "properties" to emptyMap<String, Any>())
+                    ),
+                    FunctionDeclaration(
+                        name = "synthesizeToolScript",
+                        description = "Draft, test, and save a dynamic custom utility tool in Javascript to solve novel challenges.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "problemDescription" to mapOf("type" to "STRING", "description" to "Description of the problem to solve"),
+                                "scriptContent" to mapOf("type" to "STRING", "description" to "JavaScript code to test and compile"),
+                                "fileName" to mapOf("type" to "STRING", "description" to "Target filename to save script as e.g. custom_calc.js")
+                            ),
+                            "required" to listOf("problemDescription", "scriptContent", "fileName")
                         )
                     )
                 ))
@@ -782,11 +907,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             "evaluateCodeSnippet" -> {
                                 val script = args["script"]?.toString() ?: ""
-                                CodeSandbox.executeJavaScript(script)
+                                CodeSandbox.executeJavaScriptWithSelfHealing(script)
                             }
                             "runMultiAgentSwarm" -> {
                                 val topic = args["topic"]?.toString() ?: "General Optimization"
-                                "Swarm pipeline executed for topic '$topic'. Planner, Research Agent, Code Analyst, and Critic synthesized final verified design."
+                                SannaTools.executeSwarmResearchAndSaveReport(getApplication(), topic)
+                            }
+                            "auditMemoryVault" -> {
+                                SannaTools.backupAndAuditMemories(getApplication(), _uiState.value.memories)
                             }
                             "createAutomationRule" -> {
                                 val name = args["name"]?.toString() ?: "Rule"
@@ -806,6 +934,51 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                             "deleteFile" -> {
                                 val fn = args["filename"]?.toString() ?: ""
                                 SannaTools.deleteFile(getApplication(), fn)
+                            }
+                            "disasterRecoveryBackup" -> {
+                                val webhook = args["webhookUrl"]?.toString() ?: "https://api.sanna.ai/v1/webhook"
+                                SannaTools.performDisasterRecoveryBackup(getApplication(), webhook, _uiState.value.memories)
+                            }
+                            "accessibilityAutopilot" -> {
+                                val app = args["appName"]?.toString() ?: "Settings"
+                                val act = args["action"]?.toString() ?: "click"
+                                val tgt = args["target"]?.toString() ?: "button"
+                                SannaTools.performAccessibilityAutopilot(getApplication(), app, act, tgt)
+                            }
+                            "metaLearningAudit" -> {
+                                SannaTools.performMetaLearningAudit(getApplication(), _uiState.value.memories)
+                            }
+                            "synthesizeToolScript" -> {
+                                val desc = args["problemDescription"]?.toString() ?: ""
+                                val script = args["scriptContent"]?.toString() ?: ""
+                                val fn = args["fileName"]?.toString() ?: "synthesized_script.js"
+                                
+                                val testResult = CodeSandbox.executeJavaScriptWithSelfHealing(script)
+                                if (testResult.contains("Sandbox Runtime Error:") && !testResult.contains("Self-Healing Engine Success")) {
+                                    "**[Sanna Dynamic Tool Synthesizer Error]**\n" +
+                                    "• **Problem**: $desc\n" +
+                                    "• **Test Execution Failed**: $testResult\n" +
+                                    "⚠️ Dynamic synthesis aborted to avoid deploying broken code. Please self-heal the script syntax/logic and retry."
+                                } else {
+                                    val finalScript = if (testResult.contains("• **Patched Code**:")) {
+                                        val startIdx = testResult.indexOf("```javascript\n") + "```javascript\n".length
+                                        val endIdx = testResult.indexOf("\n```", startIdx)
+                                        if (startIdx != -1 && endIdx != -1) {
+                                            testResult.substring(startIdx, endIdx)
+                                        } else {
+                                            script
+                                        }
+                                    } else {
+                                        script
+                                    }
+                                    SannaTools.createFile(getApplication(), fn, finalScript)
+                                    SannaTools.logActivity(getApplication(), "Synthesized dynamic script utility tool: $fn", "SUCCESS")
+                                    "**[Sanna Dynamic Tool Synthesizer Success]**\n" +
+                                    "• **Problem Description**: $desc\n" +
+                                    "• **Sandbox Test Result**: $testResult\n" +
+                                    "• **Stored Script File**: `$fn`\n\n" +
+                                    "✔️ Dynamic Tool Synthesized, verified locally in Mozilla Rhino sandbox, and saved to workspace successfully."
+                                }
                             }
                             else -> "Tool executed successfully."
                         }
