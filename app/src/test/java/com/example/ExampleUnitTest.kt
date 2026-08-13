@@ -1,4 +1,4 @@
-package com.example
+package com.aistudio.futureagent.agxjyz
 
 import org.junit.Assert.*
 import org.junit.Test
