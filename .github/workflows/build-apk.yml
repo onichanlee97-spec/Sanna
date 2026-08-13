@@ -31,7 +31,7 @@ jobs:
           echo "Removing any existing keystore to prevent password mismatch..."
           rm -f debug.keystore
           echo "Generating temporary debug keystore..."
-          keytool -genkey -v -keystore debug.keystore -storepass androiddebugkey -alias androiddebugkey -keypass androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace || gradle assembleDebug --stacktrace
