@@ -35,6 +35,22 @@ data class DrawerItemData(
     val icon: ImageVector
 )
 
+@Composable
+fun DrawerItemLabel(item: DrawerItemData, isSelected: Boolean) {
+    Column {
+        Text(
+            item.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (isSelected) NeonCyan else Color.White
+        )
+        Text(
+            item.subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isSelected) NeonCyan.copy(alpha = 0.7f) else Color.Gray
+        )
+    }
+}
+
 class MainActivity : FragmentActivity() {
     private val viewModel: AgentViewModel by viewModels()
     private lateinit var voiceHelper: VoiceHelper
@@ -127,18 +143,7 @@ class MainActivity : FragmentActivity() {
                                         val isSelected = (tab == item.id)
                                         NavigationDrawerItem(
                                             label = {
-                                                Column {
-                                                    Text(
-                                                        item.title,
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        color = if (isSelected) NeonCyan else Color.White
-                                                    )
-                                                    Text(
-                                                        item.subtitle,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = if (isSelected) NeonCyan.copy(alpha = 0.7f) else Color.Gray
-                                                    )
-                                                }
+                                                DrawerItemLabel(item, isSelected)
                                             },
                                             icon = {
                                                 Icon(
