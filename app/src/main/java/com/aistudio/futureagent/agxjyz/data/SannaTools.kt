@@ -328,13 +328,25 @@ object SannaTools {
         try {
             val pm = context.packageManager
             val packages = pm.getInstalledPackages(0)
-            val matchingPackage = packages.find { pkg ->
+            val launchablePackages = packages.filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+            var matchingPackage = launchablePackages.find { pkg ->
                 val appInfo = pkg.applicationInfo
                 if (appInfo != null) {
                     val appLabel = pm.getApplicationLabel(appInfo).toString()
-                    appLabel.contains(appName, ignoreCase = true) || pkg.packageName.contains(appName, ignoreCase = true)
+                    appLabel.equals(appName, ignoreCase = true)
                 } else {
                     false
+                }
+            }
+            if (matchingPackage == null) {
+                matchingPackage = launchablePackages.find { pkg ->
+                    val appInfo = pkg.applicationInfo
+                    if (appInfo != null) {
+                        val appLabel = pm.getApplicationLabel(appInfo).toString()
+                        appLabel.contains(appName, ignoreCase = true) || pkg.packageName.contains(appName, ignoreCase = true)
+                    } else {
+                        false
+                    }
                 }
             }
 
