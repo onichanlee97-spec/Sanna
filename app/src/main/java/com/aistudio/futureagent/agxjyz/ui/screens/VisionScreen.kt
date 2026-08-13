@@ -2,6 +2,9 @@ package com.aistudio.futureagent.agxjyz.ui.screens
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import android.util.Base64
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -40,8 +43,6 @@ import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -222,6 +223,9 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                                 val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(model, apiKey, request)
                                                 val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No objects or text detected."
                                                 analysisResult = text
+                                            } catch (e: retrofit2.HttpException) {
+                                                val errorBody = e.response()?.errorBody()?.string() ?: "No error body"
+                                                analysisResult = "Analysis failed: HTTP ${e.code()} - $errorBody"
                                             } catch (e: Exception) {
                                                 analysisResult = "Analysis failed: ${e.message}"
                                             }
@@ -268,5 +272,21 @@ private fun imageProxyToBase64(image: ImageProxy): String {
     val buffer: ByteBuffer = image.planes[0].buffer
     val bytes = ByteArray(buffer.capacity())
     buffer.get(bytes)
-    return Base64.encodeToString(bytes, Base64.NO_WRAP)
+    
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    if (bitmap == null) return ""
+    
+    val maxDimension = 1024
+    val scale = Math.min(maxDimension.toFloat() / bitmap.width, maxDimension.toFloat() / bitmap.height)
+    val scaledBitmap = if (scale < 1) {
+        Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
+    } else {
+        bitmap
+    }
+    
+    val outputStream = ByteArrayOutputStream()
+    scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+    val compressedBytes = outputStream.toByteArray()
+    
+    return Base64.encodeToString(compressedBytes, Base64.NO_WRAP)
 }
