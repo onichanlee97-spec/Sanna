@@ -98,6 +98,7 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
   implementation("androidx.fragment:fragment-ktx:1.8.5")
+  implementation("androidx.security:security-crypto:1.1.0-alpha06")
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation("androidx.work:work-runtime-ktx:2.9.0")

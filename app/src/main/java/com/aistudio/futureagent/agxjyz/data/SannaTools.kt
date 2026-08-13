@@ -56,30 +56,35 @@ object SannaTools {
         authHeader: String = ""
     ): String = withContext(Dispatchers.IO) {
         try {
-            val formattedUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
-            val requestBuilder = Request.Builder().url(formattedUrl)
-            
-            if (authHeader.isNotBlank()) {
-                requestBuilder.header("Authorization", authHeader)
-            }
-            requestBuilder.header("User-Agent", "SannaAgentConnector/2.0")
-
-            if (method.equals("POST", ignoreCase = true) || method.equals("PUT", ignoreCase = true)) {
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val body = jsonPayload.toRequestBody(mediaType)
-                if (method.equals("POST", ignoreCase = true)) {
-                    requestBuilder.post(body)
-                } else {
-                    requestBuilder.put(body)
+            retryWithBackoff(times = 3) {
+                val formattedUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
+                val requestBuilder = Request.Builder().url(formattedUrl)
+                
+                if (authHeader.isNotBlank()) {
+                    requestBuilder.header("Authorization", authHeader)
                 }
-            } else {
-                requestBuilder.get()
-            }
+                requestBuilder.header("User-Agent", "SannaAgentConnector/2.0")
 
-            val response = httpClient.newCall(requestBuilder.build()).execute()
-            val code = response.code
-            val respStr = response.body?.string() ?: ""
-            "Webhook '$formattedUrl' ($method) Response [$code]:\n${respStr.take(1500)}"
+                if (method.equals("POST", ignoreCase = true) || method.equals("PUT", ignoreCase = true)) {
+                    val mediaType = "application/json; charset=utf-8".toMediaType()
+                    val body = jsonPayload.toRequestBody(mediaType)
+                    if (method.equals("POST", ignoreCase = true)) {
+                        requestBuilder.post(body)
+                    } else {
+                        requestBuilder.put(body)
+                    }
+                } else {
+                    requestBuilder.get()
+                }
+
+                val response = httpClient.newCall(requestBuilder.build()).execute()
+                val code = response.code
+                if (code >= 500) {
+                    throw java.io.IOException("Transient server error: HTTP $code")
+                }
+                val respStr = response.body?.string() ?: ""
+                "Webhook '$formattedUrl' ($method) Response [$code]:\n${respStr.take(1500)}"
+            }
         } catch (e: Exception) {
             "Error invoking webhook '$url': ${e.localizedMessage}"
         }
@@ -87,31 +92,37 @@ object SannaTools {
 
     suspend fun fetchWebPageContent(urlString: String): String = withContext(Dispatchers.IO) {
         try {
-            val formattedUrl = if (!urlString.startsWith("http://") && !urlString.startsWith("https://")) {
-                "https://$urlString"
-            } else {
-                urlString
-            }
-            val request = Request.Builder()
-                .url(formattedUrl)
-                .header("User-Agent", "Mozilla/5.0 (Android; Mobile; SannaAgent/2.0)")
-                .build()
+            retryWithBackoff(times = 3) {
+                val formattedUrl = if (!urlString.startsWith("http://") && !urlString.startsWith("https://")) {
+                    "https://$urlString"
+                } else {
+                    urlString
+                }
+                val request = Request.Builder()
+                    .url(formattedUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Android; Mobile; SannaAgent/2.0)")
+                    .build()
 
-            val response = httpClient.newCall(request).execute()
-            val rawHtml = response.body?.string() ?: ""
+                val response = httpClient.newCall(request).execute()
+                val code = response.code
+                if (code >= 500) {
+                    throw java.io.IOException("Transient server error: HTTP $code")
+                }
+                val rawHtml = response.body?.string() ?: ""
 
-            // Simple HTML tag stripper for clean text extraction
-            val cleanText = rawHtml
-                .replace(Regex("<script[\\s\\S]*?</script>"), "")
-                .replace(Regex("<style[\\s\\S]*?</style>"), "")
-                .replace(Regex("<[^>]+>"), " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
+                // Simple HTML tag stripper for clean text extraction
+                val cleanText = rawHtml
+                    .replace(Regex("<script[\\s\\S]*?</script>"), "")
+                    .replace(Regex("<style[\\s\\S]*?</style>"), "")
+                    .replace(Regex("<[^>]+>"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
 
-            if (cleanText.isBlank()) {
-                "Fetched $formattedUrl successfully, but no body text content was found."
-            } else {
-                "Web Content from $formattedUrl:\n\n${cleanText.take(2500)}"
+                if (cleanText.isBlank()) {
+                    "Fetched $formattedUrl successfully, but no body text content was found."
+                } else {
+                    "Web Content from $formattedUrl:\n\n${cleanText.take(2500)}"
+                }
             }
         } catch (e: Exception) {
             "Error scraping web page '$urlString': ${e.localizedMessage}"
@@ -147,6 +158,40 @@ object SannaTools {
         } catch (e: Exception) {
             "Error exporting transcript: ${e.localizedMessage}"
         }
+    }
+
+    suspend fun logActivity(context: Context, action: String, status: String) = withContext(Dispatchers.IO) {
+        try {
+            val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            val logEntry = "[$timestamp] $action - Status: $status\n"
+            val file = java.io.File(context.filesDir, "audit_log.txt")
+            file.appendText(logEntry)
+        } catch (e: Exception) {
+            // Safe fallback
+        }
+    }
+
+    suspend fun <T> retryWithBackoff(
+        times: Int = 3,
+        initialDelayMillis: Long = 1000,
+        maxDelayMillis: Long = 10000,
+        factor: Double = 2.0,
+        block: suspend () -> T
+    ): T {
+        var currentDelay = initialDelayMillis
+        repeat(times - 1) { attempt ->
+            try {
+                return block()
+            } catch (e: java.io.IOException) {
+                // Network or transient error - retry
+            } catch (e: Exception) {
+                // Non-transient error, rethrow immediately
+                throw e
+            }
+            kotlinx.coroutines.delay(currentDelay)
+            currentDelay = (currentDelay * factor).toLong().coerceAtMost(maxDelayMillis)
+        }
+        return block() // final attempt
     }
 
     suspend fun createFile(context: Context, filename: String, content: String): String = withContext(Dispatchers.IO) {
@@ -286,12 +331,17 @@ object SannaTools {
     }
 
     suspend fun scrapeScreenNodes(): String = withContext(Dispatchers.IO) {
-        "[Accessibility Screen Scrape]: Visible UI Elements:\n" +
-                "1. [Button] 'Send Message'\n" +
-                "2. [TextField] 'Type message...'\n" +
-                "3. [TextView] 'SANNA // VOICE_AGENT_CORE'\n" +
-                "4. [Icon] 'Voice Mic' (Interactive)\n" +
-                "5. [NavigationTab] 'CORE', 'CHAT', 'SKILLS', 'SWARM', 'FILES', 'PIPELINE'"
+        val hierarchy = com.aistudio.futureagent.agxjyz.service.SannaAccessibilityMonitor.lastScrapedHierarchy
+        if (hierarchy.isNotBlank()) {
+            hierarchy
+        } else {
+            "[Accessibility Screen Scrape - Simulated Fallback (Enable Sanna service in Android settings for live screen scraping)]:\n" +
+                    "1. [Button] 'Send Message' text=\"Send Message\" clickable=true\n" +
+                    "2. [TextField] 'Type message...' text=\"\" clickable=true\n" +
+                    "3. [TextView] 'SANNA // VOICE_AGENT_CORE' text=\"SANNA\" clickable=false\n" +
+                    "4. [Icon] 'Voice Mic' clickable=true\n" +
+                    "5. [NavigationTab] 'CHAT', 'CORE', 'SKILLS', 'FILES', 'PIPELINE'"
+        }
     }
 
     suspend fun toggleWifi(context: Context, enabled: Boolean): String = withContext(Dispatchers.Main) {

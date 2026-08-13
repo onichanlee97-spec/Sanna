@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Sanna</string>
+    <string name="accessibility_service_description">Sanna Agent dynamic screen scraping and click automation system.</string>
 </resources>

@@ -128,10 +128,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 repository.allMemories.collect { entities ->
-                    val memories = entities.map {
-                        UserMemory(key = it.key, value = it.value, category = it.category)
+                    if (entities.isEmpty()) {
+                        val initialMemories = listOf(
+                            UserMemoryEntity("operator_name", "Sanna Operator", "User Profile"),
+                            UserMemoryEntity("preferred_model", "gemini-1.5-flash", "Core Settings"),
+                            UserMemoryEntity("autonomous_mode", "Active", "Automation"),
+                            UserMemoryEntity("voice_synth", "Enabled", "Voice Interface"),
+                            UserMemoryEntity("high_risk_guardrails", "Strict Authorization Required", "Security")
+                        )
+                        for (memory in initialMemories) {
+                            repository.insertMemory(memory)
+                        }
+                    } else {
+                        val memories = entities.map {
+                            UserMemory(key = it.key, value = it.value, category = it.category)
+                        }
+                        _uiState.update { it.copy(memories = memories) }
                     }
-                    _uiState.update { it.copy(memories = memories) }
                 }
             } catch (e: Throwable) {
                 // Ignore flow error on startup
@@ -533,6 +546,41 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
                 decls.addAll(listOf(
                     FunctionDeclaration(
+                        name = "sendWhatsAppMessage",
+                        description = "Send a direct WhatsApp message to a phone number.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "phoneNumber" to mapOf("type" to "STRING", "description" to "Phone number with country code e.g. +15551234567"),
+                                "message" to mapOf("type" to "STRING", "description" to "Message content")
+                            ),
+                            "required" to listOf("phoneNumber", "message")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "sendTelegramMessage",
+                        description = "Open a Telegram chat or send a message to a username.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "username" to mapOf("type" to "STRING", "description" to "Telegram username or chat ID"),
+                                "message" to mapOf("type" to "STRING", "description" to "Optional message content")
+                            ),
+                            "required" to listOf("username")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "playSpotifyTrack",
+                        description = "Search and play a song/playlist/album/artist on Spotify.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "query" to mapOf("type" to "STRING", "description" to "Search query (song name, artist, album)")
+                            ),
+                            "required" to listOf("query")
+                        )
+                    ),
+                    FunctionDeclaration(
                         name = "fetchWeather",
                         description = "Get weather forecast for location.",
                         parameters = mapOf(
@@ -610,6 +658,42 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         val toolName = call.name
                         val args = call.args ?: emptyMap()
 
+                        // Intercept high-risk actions for human-in-the-loop governance
+                        if (toolName == "deleteFile" || toolName == "callCustomWebhook") {
+                            _uiState.update { state ->
+                                state.copy(
+                                    isProcessing = false,
+                                    pendingConfirmation = PendingConfirmation(
+                                        actionId = System.currentTimeMillis().toString(),
+                                        toolName = toolName,
+                                        description = when (toolName) {
+                                            "deleteFile" -> "Deleting local storage file: '${args["filename"]}'"
+                                            "callCustomWebhook" -> "Invoking external REST API: '${args["url"]}' with payload '${args["jsonPayload"]}'"
+                                            else -> "High-risk tool execution request."
+                                        },
+                                        onConfirm = {
+                                            viewModelScope.launch {
+                                                _uiState.update { it.copy(isProcessing = true) }
+                                                val res = when (toolName) {
+                                                    "deleteFile" -> SannaTools.deleteFile(getApplication(), args["filename"]?.toString() ?: "")
+                                                    else -> {
+                                                        val url = args["url"]?.toString() ?: ""
+                                                        val method = args["method"]?.toString() ?: "POST"
+                                                        val payload = args["jsonPayload"]?.toString() ?: "{}"
+                                                        val auth = args["authHeader"]?.toString() ?: ""
+                                                        SannaTools.callCustomWebhook(url, method, payload, auth)
+                                                    }
+                                                }
+                                                repository.insertMessage(ChatMessageEntity(System.currentTimeMillis().toString(), false, "🛡️ Human-In-The-Loop Authorized Result:\n$res"))
+                                                _uiState.update { it.copy(isProcessing = false) }
+                                            }
+                                        }
+                                    )
+                                )
+                            }
+                            break
+                        }
+
                         val toolResult = when (toolName) {
                             "rememberFact" -> {
                                 val k = args["key"]?.toString() ?: "fact"
@@ -675,6 +759,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                             "calculator" -> AdvancedAgentTools.executeAdvancedTool("calculator", args)
                             "searchWikipedia" -> AgentTools.executeTool("search", args["query"]?.toString() ?: "")
                             "fetchWeather" -> AgentTools.executeTool("weather", args["location"]?.toString() ?: "New York")
+                            "sendWhatsAppMessage" -> {
+                                val phone = args["phoneNumber"]?.toString() ?: ""
+                                val msg = args["message"]?.toString() ?: ""
+                                IntentRouter.sendWhatsAppMessage(getApplication(), phone, msg)
+                            }
+                            "sendTelegramMessage" -> {
+                                val user = args["username"]?.toString() ?: ""
+                                val msg = args["message"]?.toString()
+                                IntentRouter.openTelegram(getApplication(), user, msg)
+                            }
+                            "playSpotifyTrack" -> {
+                                val query = args["query"]?.toString() ?: ""
+                                IntentRouter.playSpotify(getApplication(), query)
+                            }
                             "callCustomWebhook" -> {
                                 val url = args["url"]?.toString() ?: ""
                                 val method = args["method"]?.toString() ?: "POST"
@@ -711,6 +809,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             else -> "Tool executed successfully."
                         }
+
+                        SannaTools.logActivity(getApplication(), "Tool Call: $toolName", "SUCCESS")
 
                         currentConversationContents.add(Content(parts = listOf(Part(text = "Sanna sub-agent tool '$toolName' executed with result: $toolResult"))))
                     } else {

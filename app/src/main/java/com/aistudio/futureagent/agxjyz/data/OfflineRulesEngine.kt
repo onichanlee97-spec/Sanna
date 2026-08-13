@@ -59,6 +59,12 @@ object OfflineRulesEngine {
                     "⚡ [Sanna Offline Engine]: Math expression evaluated offline."
                 }
             }
+            lower.contains("device") || lower.contains("info") || lower.contains("spec") || lower.contains("system") -> {
+                val osVersion = android.os.Build.VERSION.RELEASE
+                val deviceModel = android.os.Build.MODEL
+                val brand = android.os.Build.BRAND
+                "⚡ [Sanna Offline Engine]: System Specs - Device: $brand $deviceModel | OS: Android $osVersion | CPU Cores: ${Runtime.getRuntime().availableProcessors()}"
+            }
             else -> {
                 "⚡ [Sanna Offline Engine - Network Fallback]: Operating without active Gemini API connection. Sanna can still check your battery, read local files, inspect memory vault, or run local calculations."
             }

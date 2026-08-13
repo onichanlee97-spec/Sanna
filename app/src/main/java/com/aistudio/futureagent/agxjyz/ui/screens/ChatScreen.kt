@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
@@ -581,6 +583,51 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
                 } else if (!msg.imageBase64.isNullOrEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text("[Attached Image]", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
+                }
+
+                if (!msg.isUser) {
+                    Spacer(Modifier.height(8.dp))
+                    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                    var copied by remember { mutableStateOf(false) }
+
+                    if (copied) {
+                        LaunchedEffect(Unit) {
+                            kotlinx.coroutines.delay(1500)
+                            copied = false
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(msg.text))
+                            copied = true
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF132A38),
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, if (copied) Color.Green else Color(0xFF1E3A4C)),
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .height(32.dp)
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (copied) Icons.Default.Done else Icons.Default.ContentCopy,
+                                contentDescription = "Copy response text",
+                                tint = if (copied) Color.Green else NeonCyan,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                if (copied) "COPIED" else "COPY RESPONSE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (copied) Color.Green else Color.White
+                            )
+                        }
+                    }
                 }
             }
         }
