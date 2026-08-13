@@ -99,7 +99,8 @@ class MainActivity : FragmentActivity() {
                         DrawerItemData(3, "Multi-Agent Swarm", "Sub-Agent Pipeline", Icons.Default.AccountTree),
                         DrawerItemData(4, "Code Sandbox", "JS Rhino Interpreter", Icons.Default.Code),
                         DrawerItemData(5, "File Workspace", "Code Syntax & Artifacts", Icons.Default.Folder),
-                        DrawerItemData(6, "Pipeline & Governance", "Webhooks, Settings & Rules", Icons.Default.Settings)
+                        DrawerItemData(6, "Pipeline & Governance", "Webhooks, Settings & Rules", Icons.Default.Settings),
+                        DrawerItemData(7, "Multimodal Vision", "Real-time Scene Analysis", Icons.Default.Visibility)
                     )
                 }
 
@@ -226,6 +227,7 @@ class MainActivity : FragmentActivity() {
                             4 -> SandboxScreen(state, onOpenDrawer = { scope.launch { drawerState.open() } })
                             5 -> FilesScreen(onOpenDrawer = { scope.launch { drawerState.open() } })
                             6 -> PipelineScreen(viewModel, onOpenDrawer = { scope.launch { drawerState.open() } })
+                            7 -> VisionScreen(onOpenDrawer = { scope.launch { drawerState.open() } })
                         }
                     }
                 }
