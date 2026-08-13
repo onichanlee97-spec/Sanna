@@ -43,6 +43,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -198,36 +199,75 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                         image.close()
                                         
                                         withContext(Dispatchers.IO) {
-                                            try {
-                                                var apiKey = com.aistudio.futureagent.agxjyz.data.SecureStorage.getApiKey(context)
-                                                if (apiKey.isBlank()) {
-                                                    apiKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
-                                                }
-                                                val model = com.aistudio.futureagent.agxjyz.data.SecureStorage.getSelectedModel(context)
-                                                
-                                                val request = com.aistudio.futureagent.agxjyz.api.GenerateContentRequest(
-                                                    contents = listOf(
-                                                        com.aistudio.futureagent.agxjyz.api.Content(
-                                                            parts = listOf(
-                                                                com.aistudio.futureagent.agxjyz.api.Part(text = "Describe this scene in detail using natural language. Do not return bounding box coordinates or JSON. Provide a rich, descriptive caption of the objects, text, and overall environment."),
-                                                                com.aistudio.futureagent.agxjyz.api.Part(
-                                                                    inlineData = com.aistudio.futureagent.agxjyz.api.InlineData(
-                                                                        mimeType = "image/jpeg",
-                                                                        data = base64
+                                            var attempt = 0
+                                            val maxAttempts = 3
+                                            var success = false
+                                            
+                                            val preferredModel = com.aistudio.futureagent.agxjyz.data.SecureStorage.getSelectedModel(context)
+                                            val fallbackModels = listOf(preferredModel, "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-1.5-flash").distinct()
+                                            var currentModelIndex = 0
+                                            
+                                            while (attempt < maxAttempts && !success) {
+                                                try {
+                                                    attempt++
+                                                    var apiKey = com.aistudio.futureagent.agxjyz.data.SecureStorage.getApiKey(context)
+                                                    if (apiKey.isBlank()) {
+                                                        apiKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+                                                    }
+                                                    val model = fallbackModels[currentModelIndex]
+                                                    
+                                                    val request = com.aistudio.futureagent.agxjyz.api.GenerateContentRequest(
+                                                        contents = listOf(
+                                                            com.aistudio.futureagent.agxjyz.api.Content(
+                                                                parts = listOf(
+                                                                    com.aistudio.futureagent.agxjyz.api.Part(text = "Describe this scene in detail using natural language. Do not return bounding box coordinates or JSON. Provide a rich, descriptive caption of the objects, text, and overall environment."),
+                                                                    com.aistudio.futureagent.agxjyz.api.Part(
+                                                                        inlineData = com.aistudio.futureagent.agxjyz.api.InlineData(
+                                                                            mimeType = "image/jpeg",
+                                                                            data = base64
+                                                                        )
                                                                     )
                                                                 )
                                                             )
                                                         )
                                                     )
-                                                )
-                                                val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(model, apiKey, request)
-                                                val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No objects or text detected."
-                                                analysisResult = text
-                                            } catch (e: retrofit2.HttpException) {
-                                                val errorBody = e.response()?.errorBody()?.string() ?: "No error body"
-                                                analysisResult = "Analysis failed: HTTP ${e.code()} - $errorBody"
-                                            } catch (e: Exception) {
-                                                analysisResult = "Analysis failed: ${e.message}"
+                                                    val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(model, apiKey, request)
+                                                    val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No objects or text detected."
+                                                    analysisResult = if (currentModelIndex > 0) {
+                                                        "(Fallback to $model)\n$text"
+                                                    } else {
+                                                        text
+                                                    }
+                                                    success = true
+                                                } catch (e: retrofit2.HttpException) {
+                                                    if (e.code() == 429 && currentModelIndex < fallbackModels.size - 1) {
+                                                        // Quota exceeded for current model, fallback to next
+                                                        currentModelIndex++
+                                                        attempt-- // don't count fallback as a retry limit against maxAttempts if we want 3 tries per model? Or just keep it. Let's just let attempt increase, but maybe reset it?
+                                                        // Actually, let's just reset attempt for the new model
+                                                        attempt = 0
+                                                        delay(500L)
+                                                    } else if (e.code() == 503 && attempt < maxAttempts) {
+                                                        // Server overloaded, wait and retry
+                                                        delay(1500L * attempt)
+                                                    } else {
+                                                        val errorBody = e.response()?.errorBody()?.string() ?: "No error body"
+                                                        // Use clean fallback messages for common HTTP errors
+                                                        if (e.code() == 503) {
+                                                            analysisResult = "Analysis failed: The AI model is currently experiencing high demand. Please try again later."
+                                                        } else if (e.code() == 429) {
+                                                            analysisResult = "Analysis failed: API quota exceeded across all fallback models. Please wait a minute or check your billing details."
+                                                        } else if (e.code() == 400) {
+                                                            analysisResult = "Analysis failed: Invalid request or API key. Please verify your Gemini API key in settings."
+                                                        } else {
+                                                            analysisResult = "Analysis failed: HTTP ${e.code()} - $errorBody"
+                                                        }
+                                                        success = true // Break loop on non-retriable error or max retries
+                                                    }
+                                                } catch (e: Exception) {
+                                                    analysisResult = "Analysis failed: ${e.message}"
+                                                    success = true // Break loop on generic exception
+                                                }
                                             }
                                         }
                                         isAnalyzing = false
