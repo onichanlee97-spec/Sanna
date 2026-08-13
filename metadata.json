@@ -1,0 +1,6 @@
+{
+  "name": "Sanna",
+  "description": "Open-source voice-first Android assistant and multi-step LLM agent loop",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
