@@ -198,7 +198,12 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                         
                                         withContext(Dispatchers.IO) {
                                             try {
-                                                val apiKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+                                                var apiKey = com.aistudio.futureagent.agxjyz.data.SecureStorage.getApiKey(context)
+                                                if (apiKey.isBlank()) {
+                                                    apiKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+                                                }
+                                                val model = com.aistudio.futureagent.agxjyz.data.SecureStorage.getSelectedModel(context)
+                                                
                                                 val request = com.aistudio.futureagent.agxjyz.api.GenerateContentRequest(
                                                     contents = listOf(
                                                         com.aistudio.futureagent.agxjyz.api.Content(
@@ -214,7 +219,7 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                                         )
                                                     )
                                                 )
-                                                val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(apiKey, request)
+                                                val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(model, apiKey, request)
                                                 val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No objects or text detected."
                                                 analysisResult = text
                                             } catch (e: Exception) {
