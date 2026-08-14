@@ -545,6 +545,8 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
         }
     }
 
+    var showMenu by remember { mutableStateOf(false) }
+    
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (msg.isUser) Arrangement.End else Arrangement.Start
@@ -566,63 +568,77 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
             Spacer(Modifier.width(8.dp))
         }
 
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (msg.isUser) 18.dp else 4.dp,
-                bottomEnd = if (msg.isUser) 4.dp else 18.dp
-            ),
-            color = if (msg.isUser) Color(0xFF0F2C3E) else Color(0xFF091622),
-            border = androidx.compose.foundation.BorderStroke(
-                0.6.dp,
-                if (msg.isUser) NeonCyan.copy(alpha = 0.6f) else Color(0xFF1B3B4F)
-            ),
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .combinedClickable(
-                    onClick = { },
-                    onLongClick = {
+        Box {
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 18.dp,
+                    topEnd = 18.dp,
+                    bottomStart = if (msg.isUser) 18.dp else 4.dp,
+                    bottomEnd = if (msg.isUser) 4.dp else 18.dp
+                ),
+                color = if (msg.isUser) Color(0xFF0F2C3E) else Color(0xFF091622),
+                border = androidx.compose.foundation.BorderStroke(
+                    0.6.dp,
+                    if (msg.isUser) NeonCyan.copy(alpha = 0.6f) else Color(0xFF1B3B4F)
+                ),
+                modifier = Modifier
+                    .widthIn(max = 300.dp)
+                    .combinedClickable(
+                        onClick = { },
+                        onLongClick = { showMenu = true }
+                    )
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(
+                        if (msg.isUser) "YOU" else "SANNA",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (msg.isUser) NeonCyan else Color.Gray,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        msg.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
+
+                    if (decodedBitmap != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Image(
+                            bitmap = decodedBitmap.asImageBitmap(),
+                            contentDescription = "Uploaded image",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else if (!msg.imageBase64.isNullOrEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("[Attached Image]", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
+                    }
+                }
+            }
+
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(Color(0xFF091622)).border(0.5.dp, Color(0xFF1B3B4F))
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Copy Message", color = Color.White) },
+                    onClick = {
                         try {
                             clipboardManager.setText(AnnotatedString(msg.text))
                             Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
                             Toast.makeText(context, "Copy failed", Toast.LENGTH_SHORT).show()
                         }
+                        showMenu = false
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = NeonCyan)
                     }
                 )
-        ) {
-            Column(Modifier.padding(14.dp)) {
-                Text(
-                    if (msg.isUser) "YOU" else "SANNA",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (msg.isUser) NeonCyan else Color.Gray,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(4.dp))
-                SelectionContainer {
-                    Text(
-                        msg.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White
-                    )
-                }
-
-                if (decodedBitmap != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Image(
-                        bitmap = decodedBitmap.asImageBitmap(),
-                        contentDescription = "Uploaded image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                } else if (!msg.imageBase64.isNullOrEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("[Attached Image]", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
-                }
-
             }
         }
     }
