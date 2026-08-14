@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,19 +30,10 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
     val coroutineScope = rememberCoroutineScope()
 
     val apiKeyManager = remember { ApiKeyManager(context) }
-    val modelDiscovery = remember { com.aistudio.futureagent.agxjyz.agent.ApiModelDiscovery(context) }
-    var multiApiKeys by remember { mutableStateOf(apiKeyManager.getSavedKeysString()) }
-    var totalLoadedKeys by remember { mutableIntStateOf(apiKeyManager.getTotalKeysCount()) }
-    var activeKeyIndex by remember { mutableIntStateOf(apiKeyManager.getCurrentKeyIndex()) }
-    var discoveryStatus by remember {
-        val prov = modelDiscovery.getDetectedProvider()
-        val disc = modelDiscovery.getDiscoveredModels()
-        if (disc.isNotEmpty()) {
-            mutableStateOf("Detected: $prov | Discovered Models: ${disc.size} (${disc.take(3).joinToString(", ")}...)")
-        } else {
-            mutableStateOf("Status: No API key analyzed yet.")
-        }
-    }
+    var inputApiKeys by remember { mutableStateOf("") }
+    var keyListVersion by remember { mutableIntStateOf(0) }
+    val allApiKeys = remember(keyListVersion) { apiKeyManager.getAllKeys() }
+    val activeKeyIndex = remember(keyListVersion) { apiKeyManager.getCurrentKeyIndex() }
 
     var apiKey by remember { mutableStateOf(SecureStorage.getApiKey(context)) }
     var oauthToken by remember { mutableStateOf(SecureStorage.getOAuthToken(context)) }
@@ -510,22 +501,34 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                     }
                 }
 
-                // Multi-API Key Failover Manager & Dynamic Model Discovery
+                // IMPORT API KEY Manager
                 item {
-                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "🔑 MULTI-API KEY FAILOVER & MODEL DISCOVERY") {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("API Key Failover & Model Auto-Discovery", style = MaterialTheme.typography.titleMedium, color = NeonCyan)
-                            Text("Enter comma-separated API keys. Sanna identifies provider prefixes (AIza for Gemini, sk- for OpenAI, sk-ant- for Anthropic) and automatically imports available models.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "🔑 IMPORT API KEY") {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                "Import Single & Multiple API Keys",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = NeonCyan
+                            )
+                            Text(
+                                "Paste one or multiple API keys (Meta/Llama, Gemini, OpenAI, Anthropic, Groq). Sanna detects providers automatically and auto-falls back to the next active provider key if quota or rate limits are reached.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
 
                             OutlinedTextField(
-                                value = multiApiKeys,
-                                onValueChange = { multiApiKeys = it },
-                                label = { Text("Comma-Separated API Keys") },
-                                placeholder = { Text("AIzaSyKey1..., AIzaSyKey2..., sk-..., sk-ant-...") },
+                                value = inputApiKeys,
+                                onValueChange = { inputApiKeys = it },
+                                label = { Text("Import API Key(s)") },
+                                placeholder = { Text("meta_...,\nAIzaSy...,\nsk-proj-...,\ngsk_...,\nsk-ant-...") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(90.dp),
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = NeonCyan, unfocusedBorderColor = Color.Gray)
+                                    .height(100.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = NeonCyan,
+                                    unfocusedBorderColor = Color.Gray
+                                ),
+                                maxLines = 5
                             )
 
                             Row(
@@ -535,43 +538,44 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                             ) {
                                 Button(
                                     onClick = {
-                                        apiKeyManager.setApiKeys(multiApiKeys)
-                                        totalLoadedKeys = apiKeyManager.getTotalKeysCount()
-                                        activeKeyIndex = apiKeyManager.getCurrentKeyIndex()
-                                        val currentKey = apiKeyManager.getCurrentApiKey()
-                                        val provider = modelDiscovery.identifyKeyProvider(currentKey)
-                                        savedMessage = "Multi-API Keys saved ($totalLoadedKeys keys). Provider: $provider"
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-                                ) {
-                                    Text("Save Keys", color = Color.White)
-                                }
-
-                                Button(
-                                    onClick = {
-                                        val currentKey = apiKeyManager.getCurrentApiKey()
-                                        if (currentKey.isBlank()) {
-                                            savedMessage = "Please save an API key first."
-                                            return@Button
-                                        }
-                                        discoveryStatus = "Querying provider inventory..."
-                                        coroutineScope.launch(Dispatchers.IO) {
-                                            val resultMessage = modelDiscovery.discoverAndImportModels(currentKey)
-                                            val importedList = modelDiscovery.getDiscoveredModels()
-                                            val providerName = modelDiscovery.getDetectedProvider()
-                                            withContext(Dispatchers.Main) {
-                                                discoveryStatus = "Provider: $providerName | $resultMessage"
-                                                savedMessage = resultMessage
+                                        if (inputApiKeys.isNotBlank()) {
+                                            val addedCount = apiKeyManager.importKeys(inputApiKeys)
+                                            keyListVersion++
+                                            savedMessage = if (addedCount > 0) {
+                                                "Successfully imported and saved $addedCount API key(s)."
+                                            } else {
+                                                "Keys saved and synchronized."
                                             }
+                                            inputApiKeys = ""
+                                        } else {
+                                            savedMessage = "Please enter or paste at least one API key."
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
                                     colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
                                 ) {
-                                    Text("Auto-Import Models", color = Color.Black)
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Import Keys",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Import & Save Keys", color = Color.Black)
+                                }
+
+                                if (inputApiKeys.isNotEmpty()) {
+                                    OutlinedButton(
+                                        onClick = { inputApiKeys = "" },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.Gray)
+                                    ) {
+                                        Text("Clear")
+                                    }
                                 }
                             }
+
+                            HorizontalDivider(color = Color(0xFF1E3A4C), modifier = Modifier.padding(vertical = 4.dp))
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -579,18 +583,150 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Active: #${activeKeyIndex + 1} of $totalLoadedKeys keys",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (totalLoadedKeys > 0) NeonCyan else Color.Gray
-                                )
-                            }
-
-                            if (discoveryStatus.isNotEmpty()) {
-                                Text(
-                                    discoveryStatus,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = "Saved Keys (${allApiKeys.size})",
+                                    style = MaterialTheme.typography.titleSmall,
                                     color = NeonCyan
                                 )
+                                if (allApiKeys.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = {
+                                            apiKeyManager.clearAllKeys()
+                                            keyListVersion++
+                                            savedMessage = "All saved API keys cleared."
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Clear All", color = Color(0xFFFF5252), style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+
+                            if (allApiKeys.isEmpty()) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = Color(0xFF0F2B3C).copy(alpha = 0.5f),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E3A4C))
+                                ) {
+                                    Text(
+                                        "No API keys imported yet. Paste your API keys above and tap 'Import & Save Keys'.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
+                                }
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    allApiKeys.forEachIndexed { index, key ->
+                                        val isActive = (index == activeKeyIndex)
+                                        val provider = ApiKeyManager.detectProvider(key)
+                                        val masked = ApiKeyManager.getMaskedKey(key)
+
+                                        Surface(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    apiKeyManager.setActiveKeyIndex(index)
+                                                    keyListVersion++
+                                                    savedMessage = "Active API key set to #${index + 1} ($provider)"
+                                                },
+                                            color = if (isActive) Color(0xFF0A2E44) else Color(0xFF071926),
+                                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                if (isActive) NeonCyan else Color(0xFF1A3B4F)
+                                            )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            "#${index + 1}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color.Gray
+                                                        )
+                                                        val badgeBg = when {
+                                                            isActive -> NeonCyan
+                                                            provider == "Meta (Llama)" -> Color(0xFF0064E0)
+                                                            provider == "Gemini" -> Color(0xFF1E88E5)
+                                                            provider == "OpenAI" -> Color(0xFF10A37F)
+                                                            provider == "Anthropic" -> Color(0xFFD97706)
+                                                            provider == "Groq" -> Color(0xFFF97316)
+                                                            else -> Color(0xFF1E3A4C)
+                                                        }
+                                                        Surface(
+                                                            color = badgeBg,
+                                                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                                        ) {
+                                                            Text(
+                                                                provider,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = if (isActive) Color.Black else Color.White,
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                        if (isActive) {
+                                                            Text(
+                                                                "ACTIVE",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = NeonCyan
+                                                            )
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(4.dp))
+                                                    Text(
+                                                        masked,
+                                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                                        ),
+                                                        color = if (isActive) Color.White else Color.LightGray
+                                                    )
+                                                }
+
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    if (!isActive) {
+                                                        TextButton(
+                                                            onClick = {
+                                                                apiKeyManager.setActiveKeyIndex(index)
+                                                                keyListVersion++
+                                                                savedMessage = "Active API key set to #${index + 1} ($provider)"
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text("USE", color = NeonCyan, style = MaterialTheme.typography.labelSmall)
+                                                        }
+                                                    }
+
+                                                    // API Delete (X) Button
+                                                    IconButton(
+                                                        onClick = {
+                                                            apiKeyManager.deleteKeyAt(index)
+                                                            keyListVersion++
+                                                            savedMessage = "API Key #${index + 1} ($provider) deleted."
+                                                        },
+                                                        modifier = Modifier.size(36.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Close,
+                                                            contentDescription = "Delete API Key",
+                                                            tint = Color(0xFFFF5252),
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

@@ -1374,16 +1374,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             context = getApplication(),
             apiKey = apiKey,
             request = request,
-            onFallbackTriggered = { fromModel, toModel ->
-                val fromName = SecureStorage.getModelDisplayName(fromModel)
-                val toName = SecureStorage.getModelDisplayName(toModel)
-                _uiState.update { it.copy(selectedModel = toModel) }
+            onFallbackTriggered = { fromTarget, toTarget ->
+                val fromName = if (fromTarget.contains("Key") || fromTarget.contains("Quota") || fromTarget.contains("Error")) fromTarget else SecureStorage.getModelDisplayName(fromTarget)
+                val toName = if (toTarget.contains("Key") || toTarget.contains("Provider") || toTarget.contains("Active")) toTarget else SecureStorage.getModelDisplayName(toTarget)
+                if (!toTarget.contains("Key") && !toTarget.contains("Provider")) {
+                    _uiState.update { it.copy(selectedModel = toTarget) }
+                }
                 viewModelScope.launch {
                     repository.insertMessage(
                         ChatMessageEntity(
                             id = System.currentTimeMillis().toString(),
                             isUser = false,
-                            text = "⚡ Quota Limit Auto-Fallback: $fromName limit reached. Automatically switched active model to $toName."
+                            text = "⚡ Quota Limit Auto-Failover: $fromName reached capacity/rate-limit. Switched automatically to next active LLM provider/model: $toName."
                         )
                     )
                 }

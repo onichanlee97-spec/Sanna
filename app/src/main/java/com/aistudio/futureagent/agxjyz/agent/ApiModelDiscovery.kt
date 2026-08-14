@@ -25,8 +25,10 @@ class ApiModelDiscovery(private val context: Context) {
 
     enum class Provider {
         GOOGLE_GEMINI,
+        META_LLAMA,
         OPENAI,
         ANTHROPIC,
+        GROQ,
         UNKNOWN
     }
 
@@ -37,8 +39,12 @@ class ApiModelDiscovery(private val context: Context) {
         val trimmed = apiKey.trim()
         return when {
             trimmed.startsWith("AIza") -> Provider.GOOGLE_GEMINI
+            trimmed.startsWith("meta_") || trimmed.startsWith("llama_") || trimmed.startsWith("MLA_") ||
+                trimmed.startsWith("EAAB") || trimmed.startsWith("LA-") ||
+                trimmed.contains("meta", ignoreCase = true) || trimmed.contains("llama", ignoreCase = true) -> Provider.META_LLAMA
             trimmed.startsWith("sk-ant-") -> Provider.ANTHROPIC
             trimmed.startsWith("sk-") -> Provider.OPENAI
+            trimmed.startsWith("gsk_") -> Provider.GROQ
             else -> Provider.UNKNOWN
         }
     }
@@ -49,10 +55,39 @@ class ApiModelDiscovery(private val context: Context) {
 
         return when (provider) {
             Provider.GOOGLE_GEMINI -> fetchGeminiModels(apiKey)
+            Provider.META_LLAMA -> fetchMetaModels(apiKey)
             Provider.OPENAI -> fetchOpenAIModels(apiKey)
             Provider.ANTHROPIC -> fetchAnthropicModels(apiKey)
+            Provider.GROQ -> fetchGroqModels(apiKey)
             Provider.UNKNOWN -> "Error: Unrecognized API key format."
         }
+    }
+
+    private fun fetchMetaModels(apiKey: String): String {
+        val modelNames = listOf(
+            "llama-3.3-70b-instruct",
+            "llama-3.1-405b-instruct",
+            "llama-3.1-70b-instruct",
+            "llama-3.1-8b-instruct",
+            "llama-3.2-11b-vision-instruct",
+            "llama-3.2-3b-instruct",
+            "llama-guard-3-8b"
+        )
+        saveDiscoveredModels(modelNames)
+        AuditLogger.logEvent(context, "MODEL_IMPORT", "Successfully imported ${modelNames.size} Meta (Llama) models.")
+        return "Success: Imported ${modelNames.size} Meta (Llama) models."
+    }
+
+    private fun fetchGroqModels(apiKey: String): String {
+        val modelNames = listOf(
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-specdec",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768"
+        )
+        saveDiscoveredModels(modelNames)
+        AuditLogger.logEvent(context, "MODEL_IMPORT", "Successfully imported ${modelNames.size} Groq models.")
+        return "Success: Imported ${modelNames.size} Groq models."
     }
 
     private fun fetchGeminiModels(apiKey: String): String {

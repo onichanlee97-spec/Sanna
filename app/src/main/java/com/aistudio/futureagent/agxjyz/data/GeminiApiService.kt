@@ -4,7 +4,9 @@ import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
@@ -119,61 +121,370 @@ object RetrofitClient {
 }
 
 object GeminiFallbackExecutor {
+    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
     suspend fun generateWithFallback(
         context: android.content.Context,
         apiKey: String,
         request: GeminiRequest,
-        onFallbackTriggered: ((fromModel: String, toModel: String) -> Unit)? = null
+        onFallbackTriggered: ((fromModelOrProvider: String, toModelOrProvider: String) -> Unit)? = null
     ): GeminiResponse {
         val apiKeyManager = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager(context)
-        val hasMultiKeys = apiKeyManager.getTotalKeysCount() > 0
-        var effectiveApiKey = if (hasMultiKeys) apiKeyManager.getCurrentApiKey() else apiKey
-        if (effectiveApiKey.isBlank()) {
-            effectiveApiKey = apiKey
+        val allKeys = apiKeyManager.getAllKeys()
+        val hasMultiKeys = allKeys.isNotEmpty()
+
+        val keysToTry = if (hasMultiKeys) {
+            val currentIndex = apiKeyManager.getCurrentKeyIndex().coerceIn(0, (allKeys.size - 1).coerceAtLeast(0))
+            // Start from currentIndex and cycle around
+            val rotated = mutableListOf<Pair<Int, String>>()
+            for (i in 0 until allKeys.size) {
+                val idx = (currentIndex + i) % allKeys.size
+                rotated.add(Pair(idx, allKeys[idx]))
+            }
+            rotated
+        } else {
+            val fallback = if (apiKey.isNotBlank()) apiKey else SecureStorage.getApiKey(context)
+            if (fallback.isNotBlank() && fallback != "MY_GEMINI_API_KEY") {
+                listOf(Pair(0, fallback))
+            } else {
+                emptyList()
+            }
         }
 
-        val models = SecureStorage.AVAILABLE_MODELS
-        val currentModel = SecureStorage.getSelectedModel(context)
-        val sortedModels = listOf(currentModel) + models.filter { it != currentModel }
+        if (keysToTry.isEmpty()) {
+            throw RuntimeException("No API key configured. Please import an API key.")
+        }
 
-        val totalKeyAttempts = if (hasMultiKeys) apiKeyManager.getTotalKeysCount() else 1
-        var keyAttempt = 0
         var lastException: Exception? = null
 
-        while (keyAttempt < totalKeyAttempts) {
-            for (i in sortedModels.indices) {
-                val model = sortedModels[i]
+        for (keyPairIndex in keysToTry.indices) {
+            val (keyIndex, currentKey) = keysToTry[keyPairIndex]
+            val providerName = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(currentKey)
+
+            // Select models for this provider
+            val modelsForProvider = getModelsForProvider(providerName, SecureStorage.getSelectedModel(context))
+
+            for (modelIndex in modelsForProvider.indices) {
+                val model = modelsForProvider[modelIndex]
                 try {
-                    val response = RetrofitClient.api.generateContent(model, effectiveApiKey, request)
-                    if (model != currentModel) {
-                        SecureStorage.saveSelectedModel(context, model)
+                    val response = executeProviderCall(providerName, currentKey, model, request)
+                    // If successful and we had to rotate keys/models, update active index & model
+                    if (hasMultiKeys && apiKeyManager.getCurrentKeyIndex() != keyIndex) {
+                        apiKeyManager.setActiveKeyIndex(keyIndex)
                     }
+                    SecureStorage.saveSelectedModel(context, model)
                     return response
                 } catch (e: Exception) {
                     lastException = e
-                    val isQuotaOrRateLimit = isQuotaException(e)
-                    if (isQuotaOrRateLimit) {
-                        val nextModel = sortedModels.getOrNull(i + 1)
+                    val isQuota = isQuotaException(e)
+                    if (isQuota) {
+                        // Check if there is a next model for this provider
+                        val nextModel = modelsForProvider.getOrNull(modelIndex + 1)
                         if (nextModel != null) {
-                            onFallbackTriggered?.invoke(model, nextModel)
-                            SecureStorage.saveSelectedModel(context, nextModel)
+                            onFallbackTriggered?.invoke(
+                                "$providerName ($model)",
+                                "$providerName ($nextModel) [Quota auto-fallback]"
+                            )
+                        } else {
+                            // Provider exhausted, falling back to next provider key
+                            val nextKeyPair = keysToTry.getOrNull(keyPairIndex + 1)
+                            if (nextKeyPair != null) {
+                                val nextProvider = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(nextKeyPair.second)
+                                onFallbackTriggered?.invoke(
+                                    "$providerName Key #${keyIndex + 1} (Quota Limit Reached)",
+                                    "Next Active LLM Provider: $nextProvider (Key #${nextKeyPair.first + 1})"
+                                )
+                            }
                         }
                     } else {
-                        throw e
+                        // If it's a non-quota fatal error and there are more keys, also try next key
+                        val nextKeyPair = keysToTry.getOrNull(keyPairIndex + 1)
+                        if (nextKeyPair != null) {
+                            val nextProvider = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(nextKeyPair.second)
+                            onFallbackTriggered?.invoke(
+                                "$providerName Key #${keyIndex + 1} (Error: ${e.message?.take(30)})",
+                                "Failover Provider: $nextProvider (Key #${nextKeyPair.first + 1})"
+                            )
+                        }
                     }
                 }
             }
+        }
 
-            // If all models failed on the current key, attempt key rotation if multi-keys configured
-            if (hasMultiKeys && apiKeyManager.rotateToNextKey()) {
-                effectiveApiKey = apiKeyManager.getCurrentApiKey()
-                keyAttempt++
-            } else {
-                break
+        throw lastException ?: RuntimeException("All configured LLM providers and API keys reached quota limits.")
+    }
+
+    private fun getModelsForProvider(provider: String, currentSelected: String): List<String> {
+        return when (provider) {
+            "Meta (Llama)" -> {
+                val list = listOf(
+                    "llama-3.3-70b-instruct",
+                    "llama-3.1-70b-instruct",
+                    "llama-3.1-8b-instruct",
+                    "llama-3.2-3b-instruct",
+                    "meta-llama/Llama-3.3-70B-Instruct"
+                )
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
+            "Anthropic" -> listOf(
+                "claude-3-5-sonnet-20241022",
+                "claude-3-haiku-20240307",
+                "claude-3-opus-20240229"
+            )
+            "OpenAI" -> {
+                val list = listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo")
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
+            "Groq" -> listOf(
+                "llama-3.3-70b-versatile",
+                "llama-3.1-70b-specdec",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768"
+            )
+            else -> {
+                // Gemini & default
+                val defaultModels = SecureStorage.AVAILABLE_MODELS.filter { it.startsWith("gemini") }
+                if (defaultModels.contains(currentSelected)) {
+                    listOf(currentSelected) + defaultModels.filter { it != currentSelected }
+                } else {
+                    listOf("gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash")
+                }
+            }
+        }
+    }
+
+    private suspend fun executeProviderCall(
+        provider: String,
+        apiKey: String,
+        model: String,
+        request: GeminiRequest
+    ): GeminiResponse {
+        return when (provider) {
+            "Gemini" -> {
+                RetrofitClient.api.generateContent(model, apiKey, request)
+            }
+            "Meta (Llama)", "OpenAI", "Groq", "Perplexity", "Mistral", "Custom / LLM" -> {
+                executeOpenAiCompatibleCall(provider, apiKey, model, request)
+            }
+            "Anthropic" -> {
+                executeAnthropicCall(apiKey, model, request)
+            }
+            else -> {
+                RetrofitClient.api.generateContent(model, apiKey, request)
+            }
+        }
+    }
+
+    private fun executeOpenAiCompatibleCall(
+        provider: String,
+        apiKey: String,
+        model: String,
+        request: GeminiRequest
+    ): GeminiResponse {
+        val endpointUrl = when (provider) {
+            "Meta (Llama)" -> "https://api.llama.com/v1/chat/completions"
+            "Groq" -> "https://api.groq.com/openai/v1/chat/completions"
+            "Perplexity" -> "https://api.perplexity.ai/chat/completions"
+            "Mistral" -> "https://api.mistral.ai/v1/chat/completions"
+            else -> "https://api.openai.com/v1/chat/completions"
+        }
+
+        val jsonPayload = org.json.JSONObject()
+        jsonPayload.put("model", model)
+
+        val messagesArray = org.json.JSONArray()
+        if (request.systemInstruction != null) {
+            val sysText = request.systemInstruction.parts.mapNotNull { it.text }.joinToString("\n")
+            if (sysText.isNotBlank()) {
+                val sysObj = org.json.JSONObject()
+                sysObj.put("role", "system")
+                sysObj.put("content", sysText)
+                messagesArray.put(sysObj)
             }
         }
 
-        throw lastException ?: RuntimeException("All configured Gemini models and API keys encountered quota or rate limits.")
+        for (content in request.contents) {
+            val msgObj = org.json.JSONObject()
+            msgObj.put("role", if (content.role == "model" || content.role == "assistant") "assistant" else "user")
+            val textContent = content.parts.mapNotNull { it.text }.joinToString("\n")
+            msgObj.put("content", textContent)
+            messagesArray.put(msgObj)
+        }
+        jsonPayload.put("messages", messagesArray)
+
+        // Tools / functions if present
+        if (!request.tools.isNullOrEmpty()) {
+            val toolsArray = org.json.JSONArray()
+            for (tool in request.tools) {
+                for (fn in tool.functionDeclarations) {
+                    val toolObj = org.json.JSONObject()
+                    toolObj.put("type", "function")
+                    val fnObj = org.json.JSONObject()
+                    fnObj.put("name", fn.name)
+                    fnObj.put("description", fn.description)
+                    if (fn.parameters != null) {
+                        fnObj.put("parameters", org.json.JSONObject(fn.parameters))
+                    }
+                    toolObj.put("function", fnObj)
+                    toolsArray.put(toolObj)
+                }
+            }
+            if (toolsArray.length() > 0) {
+                jsonPayload.put("tools", toolsArray)
+            }
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+        val body = jsonPayload.toString().toRequestBody(mediaType)
+        val httpRequest = okhttp3.Request.Builder()
+            .url(endpointUrl)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(body)
+            .build()
+
+        val httpResponse = httpClient.newCall(httpRequest).execute()
+        val responseBodyStr = httpResponse.body?.string() ?: ""
+
+        if (!httpResponse.isSuccessful) {
+            val code = httpResponse.code
+            throw RuntimeException("HTTP $code from $provider ($endpointUrl): $responseBodyStr")
+        }
+
+        val resJson = org.json.JSONObject(responseBodyStr)
+        val choices = resJson.optJSONArray("choices")
+        if (choices != null && choices.length() > 0) {
+            val firstChoice = choices.getJSONObject(0)
+            val msg = firstChoice.optJSONObject("message")
+            if (msg != null) {
+                val toolCalls = msg.optJSONArray("tool_calls")
+                if (toolCalls != null && toolCalls.length() > 0) {
+                    val tc = toolCalls.getJSONObject(0)
+                    val fn = tc.optJSONObject("function")
+                    val name = fn?.optString("name") ?: "tool"
+                    val argsStr = fn?.optString("arguments") ?: "{}"
+                    val argsMap = mutableMapOf<String, Any>()
+                    try {
+                        val argsJson = org.json.JSONObject(argsStr)
+                        val keys = argsJson.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            argsMap[k] = argsJson.get(k)
+                        }
+                    } catch (e: Exception) {
+                        // ignore args parse error
+                    }
+                    return GeminiResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = "model",
+                                    parts = listOf(
+                                        Part(functionCall = FunctionCall(name = name, args = argsMap))
+                                    )
+                                )
+                            )
+                        )
+                    )
+                }
+
+                val contentText = msg.optString("content", "")
+                return GeminiResponse(
+                    candidates = listOf(
+                        Candidate(
+                            content = Content(
+                                role = "model",
+                                parts = listOf(Part(text = contentText))
+                            )
+                        )
+                    )
+                )
+            }
+        }
+
+        return GeminiResponse(
+            candidates = listOf(
+                Candidate(
+                    content = Content(
+                        role = "model",
+                        parts = listOf(Part(text = "Completed response from $provider"))
+                    )
+                )
+            )
+        )
+    }
+
+    private fun executeAnthropicCall(
+        apiKey: String,
+        model: String,
+        request: GeminiRequest
+    ): GeminiResponse {
+        val endpointUrl = "https://api.anthropic.com/v1/messages"
+        val jsonPayload = org.json.JSONObject()
+        jsonPayload.put("model", model)
+        jsonPayload.put("max_tokens", 4096)
+
+        if (request.systemInstruction != null) {
+            val sysText = request.systemInstruction.parts.mapNotNull { it.text }.joinToString("\n")
+            if (sysText.isNotBlank()) {
+                jsonPayload.put("system", sysText)
+            }
+        }
+
+        val messagesArray = org.json.JSONArray()
+        for (content in request.contents) {
+            val msgObj = org.json.JSONObject()
+            msgObj.put("role", if (content.role == "model" || content.role == "assistant") "assistant" else "user")
+            val textContent = content.parts.mapNotNull { it.text }.joinToString("\n")
+            msgObj.put("content", textContent)
+            messagesArray.put(msgObj)
+        }
+        jsonPayload.put("messages", messagesArray)
+
+        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+        val body = jsonPayload.toString().toRequestBody(mediaType)
+        val httpRequest = okhttp3.Request.Builder()
+            .url(endpointUrl)
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("Content-Type", "application/json")
+            .post(body)
+            .build()
+
+        val httpResponse = httpClient.newCall(httpRequest).execute()
+        val responseBodyStr = httpResponse.body?.string() ?: ""
+
+        if (!httpResponse.isSuccessful) {
+            val code = httpResponse.code
+            throw RuntimeException("HTTP $code from Anthropic: $responseBodyStr")
+        }
+
+        val resJson = org.json.JSONObject(responseBodyStr)
+        val contentArray = resJson.optJSONArray("content")
+        val textBuilder = StringBuilder()
+        if (contentArray != null) {
+            for (i in 0 until contentArray.length()) {
+                val block = contentArray.getJSONObject(i)
+                if (block.optString("type") == "text") {
+                    textBuilder.append(block.optString("text"))
+                }
+            }
+        }
+
+        return GeminiResponse(
+            candidates = listOf(
+                Candidate(
+                    content = Content(
+                        role = "model",
+                        parts = listOf(Part(text = textBuilder.toString()))
+                    )
+                )
+            )
+        )
     }
 
     fun isQuotaException(e: Exception): Boolean {
@@ -192,6 +503,9 @@ object GeminiFallbackExecutor {
                lower.contains("rate") ||
                lower.contains("limit") ||
                lower.contains("overloaded") ||
-               lower.contains("unavailable")
+               lower.contains("unavailable") ||
+               lower.contains("capacity") ||
+               lower.contains("credits") ||
+               lower.contains("billing")
     }
 }

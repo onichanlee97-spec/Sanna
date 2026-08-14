@@ -24,7 +24,16 @@ object SecureStorage {
         "gemini-2.5-flash",
         "gemini-2.5-pro",
         "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-1.5-pro",
+        "llama-3.3-70b-instruct",
+        "llama-3.1-405b-instruct",
+        "llama-3.1-70b-instruct",
+        "llama-3.1-8b-instruct",
+        "llama-3.2-11b-vision-instruct",
+        "llama-3.2-3b-instruct",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-3-5-sonnet-20241022"
     )
 
     fun getModelDisplayName(modelId: String): String {
@@ -39,6 +48,15 @@ object SecureStorage {
             "gemini-2.5-pro" -> "Gemini 2.5 Pro"
             "gemini-1.5-flash" -> "Gemini 1.5 Flash"
             "gemini-1.5-pro" -> "Gemini 1.5 Pro"
+            "llama-3.3-70b-instruct" -> "Meta Llama 3.3 70B"
+            "llama-3.1-405b-instruct" -> "Meta Llama 3.1 405B"
+            "llama-3.1-70b-instruct" -> "Meta Llama 3.1 70B"
+            "llama-3.1-8b-instruct" -> "Meta Llama 3.1 8B"
+            "llama-3.2-11b-vision-instruct" -> "Meta Llama 3.2 11B Vision"
+            "llama-3.2-3b-instruct" -> "Meta Llama 3.2 3B"
+            "gpt-4o" -> "OpenAI GPT-4o"
+            "gpt-4o-mini" -> "OpenAI GPT-4o Mini"
+            "claude-3-5-sonnet-20241022" -> "Claude 3.5 Sonnet"
             else -> modelId.replace("-", " ").split(" ").joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
         }
     }
