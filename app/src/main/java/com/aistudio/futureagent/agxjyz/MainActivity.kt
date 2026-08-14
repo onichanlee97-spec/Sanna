@@ -1,17 +1,24 @@
 package com.aistudio.futureagent.agxjyz
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.enableEdgeToEdge
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.aistudio.futureagent.agxjyz.service.AgentListeningService
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -80,7 +87,11 @@ fun SannaDrawerContent(
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Image(
                     painter = androidx.compose.ui.res.painterResource(id = com.aistudio.futureagent.agxjyz.R.drawable.img_hero_sanna),
                     contentDescription = "Drawer Hero",
@@ -168,6 +179,21 @@ class MainActivity : FragmentActivity() {
     private val viewModel: AgentViewModel by viewModels()
     private lateinit var voiceHelper: VoiceHelper
 
+    private val runtimePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val micGranted = permissions[android.Manifest.permission.RECORD_AUDIO] == true
+        val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions[android.Manifest.permission.POST_NOTIFICATIONS] == true
+        } else true
+
+        val prefs = getSharedPreferences("SannaPreferences", Context.MODE_PRIVATE)
+        val isServiceActive = prefs.getBoolean("service_active", false)
+        if (isServiceActive && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+            AgentListeningService.start(this)
+        }
+    }
+
     private val speechRecognizerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -182,6 +208,55 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            AgentListeningService.start(this)
+            getSharedPreferences("SannaPreferences", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("service_active", true).apply()
+        }
+    }
+
+    fun requestOverlayAndStartListening() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            overlayPermissionLauncher.launch(intent)
+        } else {
+            AgentListeningService.start(this)
+            getSharedPreferences("SannaPreferences", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("service_active", true).apply()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleVoiceIntent(intent)
+    }
+
+    private fun handleVoiceIntent(intent: Intent?) {
+        val query = intent?.getStringExtra("VOICE_QUERY")
+        if (!query.isNullOrBlank()) {
+            voiceHelper.speak("Understood: $query")
+            viewModel.sendMessage(query, null)
+        } else if (intent?.getBooleanExtra("TRIGGER_VOICE_POPUP", false) == true) {
+            val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Sanna...")
+            }
+            try {
+                speechRecognizerLauncher.launch(speechIntent)
+            } catch (e: Exception) {
+                voiceHelper.speak("Listening for directive.")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
@@ -190,6 +265,29 @@ class MainActivity : FragmentActivity() {
             // Safe fallback
         }
         voiceHelper = VoiceHelper(this)
+
+        // Request required runtime permissions
+        val permissionsToRequest = mutableListOf(
+            android.Manifest.permission.RECORD_AUDIO
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val neededPermissions = permissionsToRequest.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (neededPermissions.isNotEmpty()) {
+            runtimePermissionsLauncher.launch(neededPermissions.toTypedArray())
+        }
+
+        // Restore persistent background listening service if enabled
+        val prefs = getSharedPreferences("SannaPreferences", Context.MODE_PRIVATE)
+        val isServiceActive = prefs.getBoolean("service_active", false)
+        if (isServiceActive && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+            AgentListeningService.start(this)
+        }
+
+        handleVoiceIntent(intent)
 
         setContent {
             BlueprintTheme {
@@ -208,7 +306,10 @@ class MainActivity : FragmentActivity() {
                         DrawerItemData(4, "Code Sandbox", "JS Rhino Interpreter", Icons.Default.Code),
                         DrawerItemData(5, "File Workspace", "Code Syntax & Artifacts", Icons.Default.Folder),
                         DrawerItemData(6, "Pipeline & Governance", "Webhooks, Settings & Rules", Icons.Default.Settings),
-                        DrawerItemData(7, "Multimodal Vision", "Real-time Scene Analysis", Icons.Default.Visibility)
+                        DrawerItemData(7, "Multimodal Vision", "Real-time Scene Analysis", Icons.Default.Visibility),
+                        DrawerItemData(8, "Diagnostics", "WorkManager & IPC Status", Icons.Default.Build),
+                        DrawerItemData(9, "Offline Queue", "Pending Local Jobs", Icons.Default.CloudOff),
+                        DrawerItemData(10, "Audit Chain", "Merkle Execution Trace", Icons.Default.Shield)
                     )
                 }
 
@@ -265,6 +366,9 @@ class MainActivity : FragmentActivity() {
                             5 -> FilesScreen(onOpenDrawer = { scope.launch { drawerState.open() } })
                             6 -> PipelineScreen(viewModel, onOpenDrawer = { scope.launch { drawerState.open() } })
                             7 -> VisionScreen(onOpenDrawer = { scope.launch { drawerState.open() } })
+                            8 -> DiagnosticsScreen(viewModel)
+                            9 -> OfflineQueueScreen(viewModel)
+                            10 -> AuditLogScreen(viewModel)
                         }
                     }
                 }

@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.BATTERY_STATS" tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
@@ -76,6 +84,27 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <receiver android:name="com.aistudio.futureagent.agxjyz.utils.ApprovalActionReceiver" android:exported="false" />
+        
+        <activity
+            android:name="com.aistudio.futureagent.agxjyz.ui.tools.ToolSynthesizerActivity"
+            android:exported="false" />
+
+        <service
+            android:name="com.aistudio.futureagent.agxjyz.service.AgentIpcService"
+            android:exported="false" />
+
+        <service
+            android:name="com.aistudio.futureagent.agxjyz.service.AgentForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name="com.aistudio.futureagent.agxjyz.service.AgentListeningService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone|dataSync" />
     </application>
 
 </manifest>

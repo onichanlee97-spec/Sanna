@@ -35,6 +35,15 @@ data class VectorEntity(
     val content: String,
     val metadata: String,
     val embedding: List<Float>,
+    val timestamp: Long = System.currentTimeMillis(),
+    val expiresAt: Long? = null // TTL Pruning support
+)
+
+@Entity(tableName = "offline_queue")
+data class OfflineRequestEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val url: String,
+    val payload: String,
     val timestamp: Long = System.currentTimeMillis()
 )
 

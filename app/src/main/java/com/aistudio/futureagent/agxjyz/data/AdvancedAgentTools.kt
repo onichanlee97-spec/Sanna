@@ -5,6 +5,8 @@ import com.aistudio.futureagent.agxjyz.BuildConfig
 import com.aistudio.futureagent.agxjyz.data.room.AgentRepository
 import com.aistudio.futureagent.agxjyz.data.room.ApprovalEntity
 import com.aistudio.futureagent.agxjyz.data.room.VectorEntity
+import com.aistudio.futureagent.agxjyz.utils.NetworkRateLimiter
+import com.aistudio.futureagent.agxjyz.utils.NotificationHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -37,6 +39,13 @@ object AdvancedAgentTools {
         toolName: String,
         args: Map<String, Any>?
     ): String {
+        // Enforce rate limiting for all network-bound tools
+        if (toolName in listOf("web_search", "vision_analysis", "vector_store_add", "vector_store_query")) {
+            if (!NetworkRateLimiter.acquire()) {
+                return "Rate limit exceeded. Please wait a moment before trying again."
+            }
+        }
+
         return withContext(Dispatchers.IO) {
             try {
                 when (toolName) {
@@ -57,7 +66,8 @@ object AdvancedAgentTools {
                     "vector_store_add" -> {
                         val text = args?.get("text")?.toString() ?: ""
                         val metadata = args?.get("metadata")?.toString() ?: "{}"
-                        vectorStoreAdd(repository, apiKey, text, metadata)
+                        val ttlHours = args?.get("ttlHours")?.toString()?.toLongOrNull() ?: 24L
+                        vectorStoreAdd(repository, apiKey, text, metadata, ttlHours)
                     }
                     "vector_store_query" -> {
                         val query = args?.get("query")?.toString() ?: ""
@@ -151,7 +161,7 @@ object AdvancedAgentTools {
         var tempFile: File? = null
         try {
             if (imageBase64.isNotBlank()) {
-                // Cache image for processing safety
+                // Cache image in private cache dir for processing safety (Scoped Storage)
                 val data = android.util.Base64.decode(imageBase64.substringAfter(","), android.util.Base64.DEFAULT)
                 tempFile = File(context.cacheDir, "vision_cache_${System.currentTimeMillis()}.jpg")
                 tempFile.writeBytes(data)
@@ -168,21 +178,28 @@ object AdvancedAgentTools {
             val response = RetrofitClient.api.generateContent("gemini-1.5-flash", apiKey, request)
             return response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No vision analysis result."
         } finally {
-            // Cleanup temp file
+            // Atomic cleanup of temporary cache files
             try {
                 tempFile?.delete()
             } catch (e: Exception) {}
         }
     }
 
-    private suspend fun vectorStoreAdd(repository: AgentRepository, apiKey: String, text: String, metadata: String): String {
+    private suspend fun vectorStoreAdd(repository: AgentRepository, apiKey: String, text: String, metadata: String, ttlHours: Long): String {
+        // Atomic Pruning of expired entries before addition
+        repository.pruneExpired(System.currentTimeMillis())
+
         val embedding = getEmbedding(apiKey, text)
-        val vector = VectorEntity(content = text, metadata = metadata, embedding = embedding)
+        val expiresAt = System.currentTimeMillis() + (ttlHours * 60 * 60 * 1000)
+        val vector = VectorEntity(content = text, metadata = metadata, embedding = embedding, expiresAt = expiresAt)
         repository.insertVector(vector)
-        return "Document successfully indexed into semantic vector store."
+        return "Document successfully indexed into semantic vector store (TTL: ${ttlHours}h)."
     }
 
     private suspend fun vectorStoreQuery(repository: AgentRepository, apiKey: String, query: String, topK: Int): String {
+        // Ensure we only query non-expired vectors
+        repository.pruneExpired(System.currentTimeMillis())
+
         val queryEmbedding = getEmbedding(apiKey, query)
         val allVectors = repository.getAllVectors()
         
@@ -229,8 +246,15 @@ object AdvancedAgentTools {
             }
         }
 
+        // Production Android: Prefer restricted toybox paths for reliability in sandbox
+        val shellCommand = if (File("/system/bin/toybox").exists()) {
+            "/system/bin/toybox $command"
+        } else {
+            command
+        }
+
         return try {
-            val process = Runtime.getRuntime().exec(command)
+            val process = Runtime.getRuntime().exec(shellCommand)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
             
@@ -360,7 +384,7 @@ object AdvancedAgentTools {
     }
 
     // HITL Persistence Helper
-    suspend fun createApproval(repository: AgentRepository, actionName: String, payload: String, riskLevel: String): String {
+    suspend fun createApproval(context: Context, repository: AgentRepository, actionName: String, payload: String, riskLevel: String): String {
         val approvalId = UUID.randomUUID().toString().substring(0, 8)
         val approval = ApprovalEntity(
             id = approvalId,
@@ -370,6 +394,10 @@ object AdvancedAgentTools {
             status = "PENDING"
         )
         repository.insertApproval(approval)
+        
+        // Push heads-up notification for Human-In-The-Loop authorization
+        NotificationHelper.postApprovalNotification(context, approvalId, actionName, riskLevel)
+        
         return approvalId
     }
 }

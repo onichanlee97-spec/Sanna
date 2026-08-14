@@ -1,10 +1,12 @@
 package com.aistudio.futureagent.agxjyz.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.BorderStroke
 import coil.compose.AsyncImage
+import com.aistudio.futureagent.agxjyz.MainActivity
+import com.aistudio.futureagent.agxjyz.security.AuditLogger
+import com.aistudio.futureagent.agxjyz.service.AgentListeningService
 import com.aistudio.futureagent.agxjyz.ui.components.*
 import com.aistudio.futureagent.agxjyz.ui.theme.NeonCyan
 import com.aistudio.futureagent.agxjyz.viewmodel.AgentUiState
@@ -173,6 +178,93 @@ fun ChatScreen(
                         imageVector = Icons.Default.DeleteSweep,
                         contentDescription = "New Chat",
                         tint = NeonCyan
+                    )
+                }
+            }
+
+            // Floating Assistant & Background Listening Toggle Bar
+            val sharedPrefs = remember { context.getSharedPreferences("SannaPreferences", Context.MODE_PRIVATE) }
+            var isFloatingActive by remember {
+                mutableStateOf(sharedPrefs.getBoolean("service_active", false) || AgentListeningService.isRunning)
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF071824),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isFloatingActive) NeonCyan.copy(alpha = 0.6f) else Color(0xFF1E3A4C))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .background(if (isFloatingActive) NeonCyan else Color.Gray, CircleShape)
+                        )
+                        Column {
+                            Text(
+                                text = "Floating Assistant & Mic",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (isFloatingActive) "Active overlay & background listening loop" else "Enable to keep Sanna listening when closed",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isFloatingActive) NeonCyan else Color.Gray
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isFloatingActive,
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                                    Toast.makeText(context, "Please grant Overlay permission to enable floating assistant.", Toast.LENGTH_LONG).show()
+                                    val activity = context as? MainActivity
+                                    if (activity != null) {
+                                        activity.requestOverlayAndStartListening()
+                                    } else {
+                                        val permissionIntent = Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:" + context.packageName)
+                                        )
+                                        context.startActivity(permissionIntent)
+                                    }
+                                } else {
+                                    AgentListeningService.start(context)
+                                    isFloatingActive = true
+                                    sharedPrefs.edit().putBoolean("service_active", true).apply()
+                                    AuditLogger.logEvent(context, "TOGGLE_SERVICE", "User enabled background assistant service.")
+                                    Toast.makeText(context, "Floating assistant enabled.", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                AgentListeningService.stop(context)
+                                isFloatingActive = false
+                                sharedPrefs.edit().putBoolean("service_active", false).apply()
+                                AuditLogger.logEvent(context, "TOGGLE_SERVICE", "User disabled background assistant service.")
+                                Toast.makeText(context, "Floating assistant disabled.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = NeonCyan,
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color(0xFF132738)
+                        )
                     )
                 }
             }

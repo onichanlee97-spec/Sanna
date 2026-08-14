@@ -17,12 +17,32 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aistudio.futureagent.agxjyz.data.SecureStorage
 import com.aistudio.futureagent.agxjyz.ui.components.*
 import com.aistudio.futureagent.agxjyz.ui.theme.NeonCyan
+import com.aistudio.futureagent.agxjyz.utils.ApiKeyManager
 import com.aistudio.futureagent.agxjyz.viewmodel.AgentViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> Unit = {}) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+
+    val apiKeyManager = remember { ApiKeyManager(context) }
+    val modelDiscovery = remember { com.aistudio.futureagent.agxjyz.agent.ApiModelDiscovery(context) }
+    var multiApiKeys by remember { mutableStateOf(apiKeyManager.getSavedKeysString()) }
+    var totalLoadedKeys by remember { mutableIntStateOf(apiKeyManager.getTotalKeysCount()) }
+    var activeKeyIndex by remember { mutableIntStateOf(apiKeyManager.getCurrentKeyIndex()) }
+    var discoveryStatus by remember {
+        val prov = modelDiscovery.getDetectedProvider()
+        val disc = modelDiscovery.getDiscoveredModels()
+        if (disc.isNotEmpty()) {
+            mutableStateOf("Detected: $prov | Discovered Models: ${disc.size} (${disc.take(3).joinToString(", ")}...)")
+        } else {
+            mutableStateOf("Status: No API key analyzed yet.")
+        }
+    }
 
     var apiKey by remember { mutableStateOf(SecureStorage.getApiKey(context)) }
     var oauthToken by remember { mutableStateOf(SecureStorage.getOAuthToken(context)) }
@@ -486,6 +506,92 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = NeonCyan)
                             )
+                        }
+                    }
+                }
+
+                // Multi-API Key Failover Manager & Dynamic Model Discovery
+                item {
+                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "🔑 MULTI-API KEY FAILOVER & MODEL DISCOVERY") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("API Key Failover & Model Auto-Discovery", style = MaterialTheme.typography.titleMedium, color = NeonCyan)
+                            Text("Enter comma-separated API keys. Sanna identifies provider prefixes (AIza for Gemini, sk- for OpenAI, sk-ant- for Anthropic) and automatically imports available models.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+
+                            OutlinedTextField(
+                                value = multiApiKeys,
+                                onValueChange = { multiApiKeys = it },
+                                label = { Text("Comma-Separated API Keys") },
+                                placeholder = { Text("AIzaSyKey1..., AIzaSyKey2..., sk-..., sk-ant-...") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(90.dp),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = NeonCyan, unfocusedBorderColor = Color.Gray)
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        apiKeyManager.setApiKeys(multiApiKeys)
+                                        totalLoadedKeys = apiKeyManager.getTotalKeysCount()
+                                        activeKeyIndex = apiKeyManager.getCurrentKeyIndex()
+                                        val currentKey = apiKeyManager.getCurrentApiKey()
+                                        val provider = modelDiscovery.identifyKeyProvider(currentKey)
+                                        savedMessage = "Multi-API Keys saved ($totalLoadedKeys keys). Provider: $provider"
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                                ) {
+                                    Text("Save Keys", color = Color.White)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val currentKey = apiKeyManager.getCurrentApiKey()
+                                        if (currentKey.isBlank()) {
+                                            savedMessage = "Please save an API key first."
+                                            return@Button
+                                        }
+                                        discoveryStatus = "Querying provider inventory..."
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            val resultMessage = modelDiscovery.discoverAndImportModels(currentKey)
+                                            val importedList = modelDiscovery.getDiscoveredModels()
+                                            val providerName = modelDiscovery.getDetectedProvider()
+                                            withContext(Dispatchers.Main) {
+                                                discoveryStatus = "Provider: $providerName | $resultMessage"
+                                                savedMessage = resultMessage
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                                ) {
+                                    Text("Auto-Import Models", color = Color.Black)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Active: #${activeKeyIndex + 1} of $totalLoadedKeys keys",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (totalLoadedKeys > 0) NeonCyan else Color.Gray
+                                )
+                            }
+
+                            if (discoveryStatus.isNotEmpty()) {
+                                Text(
+                                    discoveryStatus,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = NeonCyan
+                                )
+                            }
                         }
                     }
                 }

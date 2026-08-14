@@ -138,34 +138,55 @@ object GeminiFallbackExecutor {
         request: GeminiRequest,
         onFallbackTriggered: ((fromModel: String, toModel: String) -> Unit)? = null
     ): GeminiResponse {
+        val apiKeyManager = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager(context)
+        val hasMultiKeys = apiKeyManager.getTotalKeysCount() > 0
+        var effectiveApiKey = if (hasMultiKeys) apiKeyManager.getCurrentApiKey() else apiKey
+        if (effectiveApiKey.isBlank()) {
+            effectiveApiKey = apiKey
+        }
+
         val models = SecureStorage.AVAILABLE_MODELS
         val currentModel = SecureStorage.getSelectedModel(context)
         val sortedModels = listOf(currentModel) + models.filter { it != currentModel }
 
+        val totalKeyAttempts = if (hasMultiKeys) apiKeyManager.getTotalKeysCount() else 1
+        var keyAttempt = 0
         var lastException: Exception? = null
-        for (i in sortedModels.indices) {
-            val model = sortedModels[i]
-            try {
-                val response = RetrofitClient.api.generateContent(model, apiKey, request)
-                if (model != currentModel) {
-                    SecureStorage.saveSelectedModel(context, model)
-                }
-                return response
-            } catch (e: Exception) {
-                lastException = e
-                val isQuotaOrRateLimit = isQuotaException(e)
-                if (isQuotaOrRateLimit) {
-                    val nextModel = sortedModels.getOrNull(i + 1)
-                    if (nextModel != null) {
-                        onFallbackTriggered?.invoke(model, nextModel)
-                        SecureStorage.saveSelectedModel(context, nextModel)
+
+        while (keyAttempt < totalKeyAttempts) {
+            for (i in sortedModels.indices) {
+                val model = sortedModels[i]
+                try {
+                    val response = RetrofitClient.api.generateContent(model, effectiveApiKey, request)
+                    if (model != currentModel) {
+                        SecureStorage.saveSelectedModel(context, model)
                     }
-                } else {
-                    throw e
+                    return response
+                } catch (e: Exception) {
+                    lastException = e
+                    val isQuotaOrRateLimit = isQuotaException(e)
+                    if (isQuotaOrRateLimit) {
+                        val nextModel = sortedModels.getOrNull(i + 1)
+                        if (nextModel != null) {
+                            onFallbackTriggered?.invoke(model, nextModel)
+                            SecureStorage.saveSelectedModel(context, nextModel)
+                        }
+                    } else {
+                        throw e
+                    }
                 }
             }
+
+            // If all models failed on the current key, attempt key rotation if multi-keys configured
+            if (hasMultiKeys && apiKeyManager.rotateToNextKey()) {
+                effectiveApiKey = apiKeyManager.getCurrentApiKey()
+                keyAttempt++
+            } else {
+                break
+            }
         }
-        throw lastException ?: RuntimeException("All Gemini models encountered quota or rate limits.")
+
+        throw lastException ?: RuntimeException("All configured Gemini models and API keys encountered quota or rate limits.")
     }
 
     fun isQuotaException(e: Exception): Boolean {

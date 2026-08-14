@@ -1,6 +1,7 @@
 package com.aistudio.futureagent.agxjyz.data.room
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -64,6 +65,27 @@ interface VectorDao {
 
     @Query("DELETE FROM vector_store")
     suspend fun clearVectors()
+
+    @Query("DELETE FROM vector_store WHERE expiresAt IS NOT NULL AND expiresAt < :now")
+    suspend fun pruneExpired(now: Long)
+}
+
+@Dao
+interface OfflineQueueDao {
+    @Query("SELECT * FROM offline_queue ORDER BY timestamp ASC")
+    fun getAllOfflineRequests(): Flow<List<OfflineRequestEntity>>
+
+    @Query("SELECT * FROM offline_queue ORDER BY timestamp ASC")
+    suspend fun getAllRequestsList(): List<OfflineRequestEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRequest(request: OfflineRequestEntity)
+
+    @Delete
+    suspend fun deleteRequest(request: OfflineRequestEntity)
+
+    @Query("DELETE FROM offline_queue")
+    suspend fun clearQueue()
 }
 
 @Dao

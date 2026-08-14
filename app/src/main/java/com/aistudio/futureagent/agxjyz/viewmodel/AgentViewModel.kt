@@ -10,6 +10,22 @@ import com.aistudio.futureagent.agxjyz.BuildConfig
 import com.aistudio.futureagent.agxjyz.data.*
 import com.aistudio.futureagent.agxjyz.data.room.*
 import com.aistudio.futureagent.agxjyz.worker.AgentWorker
+import com.aistudio.futureagent.agxjyz.worker.AgentBackgroundWorker
+import com.aistudio.futureagent.agxjyz.utils.NotificationHelper
+import com.aistudio.futureagent.agxjyz.security.AuditLogger
+import com.aistudio.futureagent.agxjyz.service.AgentIpcService
+import com.aistudio.futureagent.agxjyz.service.AgentForegroundService
+import com.aistudio.futureagent.agxjyz.connectivity.NetworkMonitor
+import com.aistudio.futureagent.agxjyz.agent.AgentExecutor
+import android.content.ServiceConnection
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.*
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import java.io.File
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -62,7 +78,9 @@ data class AgentUiState(
     val averageLatencyMs: Long = 145,
     val memoryUsage: Int = 84,
     val latencyMs: Int = 12,
-    val cpuLoad: Int = 94
+    val cpuLoad: Int = 94,
+    val offlineRequests: List<OfflineRequestEntity> = emptyList(),
+    val auditLogs: List<String> = emptyList()
 )
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
@@ -72,9 +90,38 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         database.taskDao(),
         database.memoryDao(),
         database.vectorDao(),
-        database.approvalDao()
+        database.approvalDao(),
+        database.offlineQueueDao()
     )
     private val voiceHelper = VoiceHelper(application)
+
+    private var mService: Messenger? = null
+    private var mBound: Boolean = false
+
+    private val mMessenger = Messenger(object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            if (msg.what == AgentIpcService.MSG_TOOL_RESPONSE) {
+                val data = msg.data
+                val result = data.getString("result") ?: "No result"
+                // Log the IPC response
+                AuditLogger.log(getApplication(), "IPC_RESPONSE", result)
+            } else {
+                super.handleMessage(msg)
+            }
+        }
+    })
+
+    private val mConnection = object : ServiceConnection {
+        override fun onServiceConnected(className: ComponentName, service: IBinder) {
+            mService = Messenger(service)
+            mBound = true
+        }
+
+        override fun onServiceDisconnected(className: ComponentName) {
+            mService = null
+            mBound = false
+        }
+    }
 
     private val _uiState = MutableStateFlow(AgentUiState())
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
@@ -82,6 +129,19 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val savedModel = SecureStorage.getSelectedModel(application)
         _uiState.update { it.copy(selectedModel = savedModel) }
+
+        // Bind to IPC service
+        Intent(application, AgentIpcService::class.java).also { intent ->
+            application.bindService(intent, mConnection, Context.BIND_AUTO_CREATE)
+        }
+
+        viewModelScope.launch {
+            repository.allOfflineRequests.collect { requests ->
+                _uiState.update { it.copy(offlineRequests = requests) }
+            }
+        }
+
+        loadAuditLogs()
 
         viewModelScope.launch {
             try {
@@ -257,7 +317,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resolveApproval(id: String, approved: Boolean) {
         viewModelScope.launch {
-            repository.updateApprovalStatus(id, if (approved) "APPROVED" else "DENIED", "User_Operator")
+            val status = if (approved) "APPROVED" else "DENIED"
+            repository.updateApprovalStatus(id, status, "User_Operator")
+            NotificationHelper.cancelNotification(getApplication<Application>(), id)
         }
     }
 
@@ -316,6 +378,75 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadAuditLogs() {
+        viewModelScope.launch {
+            val logs = try {
+                val file = File(getApplication<Application>().filesDir, "tamper_evident_audit.log")
+                if (file.exists()) {
+                    file.readLines().reversed()
+                } else {
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            _uiState.update { it.copy(auditLogs = logs) }
+        }
+    }
+
+    fun triggerMaintenance() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val manualWork = OneTimeWorkRequest.Builder(AgentBackgroundWorker::class.java)
+            .setConstraints(constraints)
+            .build()
+
+        WorkManager.getInstance(getApplication()).enqueue(manualWork)
+    }
+
+    fun sendToolExecutionRequest(toolName: String) {
+        if (!mBound) return
+        try {
+            val msg = Message.obtain(null, AgentIpcService.MSG_TOOL_REQUEST)
+            val data = Bundle()
+            data.putString("toolName", toolName)
+            msg.data = data
+            msg.replyTo = mMessenger
+            mService?.send(msg)
+            
+            AuditLogger.log(getApplication(), "IPC_REQUEST", "Sent tool request: $toolName")
+        } catch (e: RemoteException) {
+            e.printStackTrace()
+        }
+    }
+
+    fun startForegroundAgentTask(taskName: String = "Executing AI Agent Task") {
+        AgentForegroundService.start(getApplication(), taskName)
+    }
+
+    fun queueOfflineRequest(url: String, payload: String) {
+        viewModelScope.launch {
+            repository.insertOfflineRequest(OfflineRequestEntity(url = url, payload = payload))
+            AuditLogger.log(getApplication(), "OFFLINE_REQUEST_ENQUEUED", "Enqueued request to $url")
+        }
+    }
+
+    fun flushOfflineQueue() {
+        val monitor = NetworkMonitor(getApplication())
+        monitor.flushOfflineQueue()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        if (mBound) {
+            getApplication<Application>().unbindService(mConnection)
+            mBound = false
+        }
+        voiceHelper.shutdown()
+    }
+
     fun sendMessage(prompt: String, imageBase64: String? = null) {
         if (prompt.isBlank() && imageBase64 == null) return
         val userMsgId = System.currentTimeMillis().toString()
@@ -347,14 +478,49 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 val secureKey = SecureStorage.getApiKey(getApplication())
                 val apiKey = if (secureKey.isNotBlank()) secureKey else BuildConfig.GEMINI_API_KEY
                 if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                    val errorMsgId = (System.currentTimeMillis() + 1).toString()
-                    repository.insertMessage(
-                        ChatMessageEntity(errorMsgId, false, "Please configure your GEMINI_API_KEY in the Secrets panel in AI Studio or in the Pipeline screen to enable Sanna's live agent loop.")
-                    )
-                    _uiState.update { it.copy(isProcessing = false) }
-                    repository.updateTaskStatus(planId1, "DONE")
-                    repository.updateTaskStatus(planId2, "DONE")
-                    repository.updateTaskStatus(planId3, "DONE")
+                    val executor = AgentExecutor(getApplication())
+                    executor.executeTask(prompt, object : AgentExecutor.AgentCallback {
+                        override fun onStepStarted(stepDescription: String) {
+                            viewModelScope.launch {
+                                repository.updateTaskStatus(planId1, "DONE")
+                                repository.updateTaskStatus(planId2, "EXECUTING")
+                                repository.insertTask(
+                                    AgentTaskEntity(
+                                        "STEP_${System.currentTimeMillis()}",
+                                        stepDescription,
+                                        "EXECUTING",
+                                        "Tool"
+                                    )
+                                )
+                            }
+                        }
+
+                        override fun onTaskComplete(finalResult: String) {
+                            viewModelScope.launch {
+                                repository.updateTaskStatus(planId2, "DONE")
+                                repository.updateTaskStatus(planId3, "DONE")
+                                val replyId = (System.currentTimeMillis() + 1).toString()
+                                repository.insertMessage(
+                                    ChatMessageEntity(
+                                        replyId,
+                                        false,
+                                        finalResult + "\n\n*(Autonomous Local Tool Engine. Add your GEMINI_API_KEY for live online LLM execution)*"
+                                    )
+                                )
+                                _uiState.update { it.copy(isProcessing = false) }
+                            }
+                        }
+
+                        override fun onError(error: String) {
+                            viewModelScope.launch {
+                                val replyId = (System.currentTimeMillis() + 1).toString()
+                                repository.insertMessage(
+                                    ChatMessageEntity(replyId, false, "Execution encountered error: $error")
+                                )
+                                _uiState.update { it.copy(isProcessing = false) }
+                            }
+                        }
+                    })
                     return@launch
                 }
 
@@ -884,15 +1050,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                                 else -> "High-risk tool execution request."
                             }
                             
-                            val approvalId = UUID.randomUUID().toString().substring(0, 8)
-                            val approval = ApprovalEntity(
-                                id = approvalId,
-                                actionName = toolName,
-                                payload = args.toString(),
-                                riskLevel = if (toolName == "shell_execution") "CRITICAL" else "HIGH",
-                                status = "PENDING"
+                            val riskLevel = if (toolName == "shell_execution") "CRITICAL" else "HIGH"
+                            val approvalId = AdvancedAgentTools.createApproval(
+                                getApplication(),
+                                repository,
+                                toolName,
+                                args.toString(),
+                                riskLevel
                             )
-                            repository.insertApproval(approval)
 
                             _uiState.update { state ->
                                 state.copy(
@@ -1224,10 +1389,5 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         )
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        voiceHelper.shutdown()
     }
 }

@@ -7,12 +7,26 @@ class AgentRepository(
     private val taskDao: TaskDao,
     private val memoryDao: MemoryDao,
     private val vectorDao: VectorDao,
-    private val approvalDao: ApprovalDao
+    private val approvalDao: ApprovalDao,
+    private val offlineQueueDao: OfflineQueueDao
 ) {
     val allMessages: Flow<List<ChatMessageEntity>> = chatDao.getAllMessages()
     val allTasks: Flow<List<AgentTaskEntity>> = taskDao.getAllTasks()
     val allMemories: Flow<List<UserMemoryEntity>> = memoryDao.getAllMemories()
     val allApprovals: Flow<List<ApprovalEntity>> = approvalDao.getAllApprovals()
+    val allOfflineRequests: Flow<List<OfflineRequestEntity>> = offlineQueueDao.getAllOfflineRequests()
+
+    suspend fun insertOfflineRequest(request: OfflineRequestEntity) {
+        offlineQueueDao.insertRequest(request)
+    }
+
+    suspend fun deleteOfflineRequest(request: OfflineRequestEntity) {
+        offlineQueueDao.deleteRequest(request)
+    }
+
+    suspend fun clearOfflineQueue() {
+        offlineQueueDao.clearQueue()
+    }
 
     suspend fun getApproval(id: String): ApprovalEntity? = approvalDao.getApproval(id)
 
@@ -36,6 +50,10 @@ class AgentRepository(
 
     suspend fun clearVectors() {
         vectorDao.clearVectors()
+    }
+
+    suspend fun pruneExpired(now: Long) {
+        vectorDao.pruneExpired(now)
     }
 
     suspend fun insertMessage(msg: ChatMessageEntity) {

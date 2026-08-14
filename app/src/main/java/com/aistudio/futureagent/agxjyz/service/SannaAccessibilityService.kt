@@ -31,7 +31,6 @@ object SannaAccessibilityMonitor {
             val child = node.getChild(i)
             if (child != null) {
                 traverseNode(child, builder, depth + 1)
-                child.recycle()
             }
         }
     }
@@ -44,7 +43,6 @@ class SannaAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow
         if (rootNode != null) {
             SannaAccessibilityMonitor.updateHierarchy(rootNode)
-            rootNode.recycle()
         }
     }
 

@@ -11,7 +11,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SettingsSuggest
 import androidx.compose.material.icons.filled.Token
 import androidx.compose.material3.*
@@ -21,7 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.aistudio.futureagent.agxjyz.MainActivity
 import com.aistudio.futureagent.agxjyz.data.AutomationEngine
+import com.aistudio.futureagent.agxjyz.service.AgentListeningService
 import com.aistudio.futureagent.agxjyz.ui.components.*
 import com.aistudio.futureagent.agxjyz.ui.theme.NeonCyan
 import com.aistudio.futureagent.agxjyz.viewmodel.AgentUiState
@@ -33,6 +37,10 @@ fun CoreHubScreen(state: AgentUiState, onOpenDrawer: () -> Unit = {}) {
     var batteryLevel by remember { mutableIntStateOf(84) }
     var isCharging by remember { mutableStateOf(false) }
     var activeRulesCount by remember { mutableIntStateOf(2) }
+    var isFloatingMicActive by remember {
+        val prefs = context.getSharedPreferences("SannaPreferences", Context.MODE_PRIVATE)
+        mutableStateOf(prefs.getBoolean("service_active", false) || AgentListeningService.isRunning)
+    }
 
     LaunchedEffect(Unit) {
         try {
@@ -244,6 +252,69 @@ fun CoreHubScreen(state: AgentUiState, onOpenDrawer: () -> Unit = {}) {
                             color = Color.White
                         )
                     }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Floating Assistant & Permanent Microphone Mode Frame
+            HudFrame(
+                modifier = Modifier.fillMaxWidth(),
+                label = "FLOATING_AGENT_MIC_LOCK"
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                imageVector = if (isFloatingMicActive) Icons.Default.GraphicEq else Icons.Default.Mic,
+                                contentDescription = "Mic State",
+                                tint = if (isFloatingMicActive) NeonCyan else Color.Gray,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = if (isFloatingMicActive) "PERMANENT MIC ACTIVE" else "FLOATING MIC STANDBY",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (isFloatingMicActive) NeonCyan else Color.White
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = if (isFloatingMicActive)
+                                "Floating icon visible on screen. Microphone is permanently open and continuously listening hands-free."
+                            else
+                                "Enable to keep a floating HUD icon on screen and keep the microphone permanently listening for voice commands.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+
+                    Switch(
+                        checked = isFloatingMicActive,
+                        onCheckedChange = { enable ->
+                            isFloatingMicActive = enable
+                            val prefs = context.getSharedPreferences("SannaPreferences", Context.MODE_PRIVATE)
+                            prefs.edit().putBoolean("service_active", enable).apply()
+
+                            if (enable) {
+                                val activity = context as? MainActivity
+                                if (activity != null) {
+                                    activity.requestOverlayAndStartListening()
+                                } else {
+                                    AgentListeningService.start(context)
+                                }
+                            } else {
+                                AgentListeningService.stop(context)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NeonCyan,
+                            checkedTrackColor = Color(0xFF0F2B3C)
+                        )
+                    )
                 }
             }
 

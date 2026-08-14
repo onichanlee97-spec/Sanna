@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ChatMessageEntity::class, AgentTaskEntity::class, UserMemoryEntity::class, VectorEntity::class, ApprovalEntity::class],
-    version = 4,
+    entities = [ChatMessageEntity::class, AgentTaskEntity::class, UserMemoryEntity::class, VectorEntity::class, ApprovalEntity::class, OfflineRequestEntity::class],
+    version = 7,
     exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -17,6 +17,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun memoryDao(): MemoryDao
     abstract fun vectorDao(): VectorDao
     abstract fun approvalDao(): ApprovalDao
+    abstract fun offlineQueueDao(): OfflineQueueDao
 
     companion object {
         @Volatile
@@ -27,7 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "future_agent_database_v2"
+                    "future_agent_database_v5"
                 )
                     .fallbackToDestructiveMigration()
                     .fallbackToDestructiveMigrationOnDowngrade()
