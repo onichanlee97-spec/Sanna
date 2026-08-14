@@ -13,33 +13,28 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
-@JsonClass(generateAdapter = true)
 data class GeminiRequest(
     val contents: List<Content>,
     val systemInstruction: Content? = null,
     val tools: List<Tool>? = null
 )
 
-@JsonClass(generateAdapter = true)
 data class Tool(
     @Json(name = "functionDeclarations")
     val functionDeclarations: List<FunctionDeclaration>
 )
 
-@JsonClass(generateAdapter = true)
 data class FunctionDeclaration(
     val name: String,
     val description: String,
     val parameters: Map<String, Any>? = null
 )
 
-@JsonClass(generateAdapter = true)
 data class Content(
     val role: String? = null,
     val parts: List<Part>
 )
 
-@JsonClass(generateAdapter = true)
 data class Part(
     val text: String? = null,
     @Json(name = "inline_data")
@@ -50,46 +45,38 @@ data class Part(
     val functionResponse: FunctionResponse? = null
 )
 
-@JsonClass(generateAdapter = true)
 data class FunctionCall(
     val name: String,
     val args: Map<String, Any>? = null
 )
 
-@JsonClass(generateAdapter = true)
 data class FunctionResponse(
     val name: String,
     val response: Map<String, Any>
 )
 
-@JsonClass(generateAdapter = true)
 data class InlineData(
     @Json(name = "mime_type")
     val mimeType: String,
     val data: String
 )
 
-@JsonClass(generateAdapter = true)
 data class GeminiResponse(
     val candidates: List<Candidate>?
 )
 
-@JsonClass(generateAdapter = true)
 data class Candidate(
     val content: Content?
 )
 
-@JsonClass(generateAdapter = true)
 data class EmbeddingRequest(
     val content: Content
 )
 
-@JsonClass(generateAdapter = true)
 data class EmbeddingResponse(
     val embedding: EmbeddingValue
 )
 
-@JsonClass(generateAdapter = true)
 data class EmbeddingValue(
     val values: List<Float>
 )
