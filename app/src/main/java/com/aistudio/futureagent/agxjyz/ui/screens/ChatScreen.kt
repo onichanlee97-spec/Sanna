@@ -1,9 +1,13 @@
 package com.aistudio.futureagent.agxjyz.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -16,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
@@ -35,10 +40,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.BorderStroke
 import coil.compose.AsyncImage
 import com.aistudio.futureagent.agxjyz.ui.components.*
 import com.aistudio.futureagent.agxjyz.ui.theme.NeonCyan
@@ -517,8 +527,11 @@ fun ChatScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatGPTMessageRow(msg: ChatMessage) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val decodedBitmap = remember(msg.imageBase64) {
         if (!msg.imageBase64.isNullOrEmpty()) {
             try {
@@ -565,7 +578,19 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
                 0.6.dp,
                 if (msg.isUser) NeonCyan.copy(alpha = 0.6f) else Color(0xFF1B3B4F)
             ),
-            modifier = Modifier.widthIn(max = 300.dp)
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .combinedClickable(
+                    onClick = { },
+                    onLongClick = {
+                        try {
+                            clipboardManager.setText(AnnotatedString(msg.text))
+                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Copy failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
         ) {
             Column(Modifier.padding(14.dp)) {
                 Text(
@@ -575,11 +600,13 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    msg.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White
-                )
+                SelectionContainer {
+                    Text(
+                        msg.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
+                }
 
                 if (decodedBitmap != null) {
                     Spacer(Modifier.height(8.dp))
@@ -596,50 +623,6 @@ fun ChatGPTMessageRow(msg: ChatMessage) {
                     Text("[Attached Image]", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
                 }
 
-                if (!msg.isUser) {
-                    Spacer(Modifier.height(8.dp))
-                    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-                    var copied by remember { mutableStateOf(false) }
-
-                    if (copied) {
-                        LaunchedEffect(Unit) {
-                            kotlinx.coroutines.delay(1500)
-                            copied = false
-                        }
-                    }
-
-                    Surface(
-                        onClick = {
-                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(msg.text))
-                            copied = true
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF132A38),
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, if (copied) Color.Green else Color(0xFF1E3A4C)),
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .height(32.dp)
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (copied) Icons.Default.Done else Icons.Default.ContentCopy,
-                                contentDescription = "Copy response text",
-                                tint = if (copied) Color.Green else NeonCyan,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                if (copied) "COPIED" else "COPY RESPONSE",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (copied) Color.Green else Color.White
-                            )
-                        }
-                    }
-                }
             }
         }
     }
