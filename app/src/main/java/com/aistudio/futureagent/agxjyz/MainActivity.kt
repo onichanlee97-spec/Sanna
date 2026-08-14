@@ -243,17 +243,6 @@ class MainActivity : FragmentActivity() {
         if (!query.isNullOrBlank()) {
             voiceHelper.speak("Understood: $query")
             viewModel.sendMessage(query, null)
-        } else if (intent?.getBooleanExtra("TRIGGER_VOICE_POPUP", false) == true) {
-            val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Sanna...")
-            }
-            try {
-                speechRecognizerLauncher.launch(speechIntent)
-            } catch (e: Exception) {
-                voiceHelper.speak("Listening for directive.")
-            }
         }
     }
 

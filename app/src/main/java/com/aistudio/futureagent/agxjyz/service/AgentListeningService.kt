@@ -29,15 +29,33 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.aistudio.futureagent.agxjyz.BuildConfig
 import com.aistudio.futureagent.agxjyz.MainActivity
 import com.aistudio.futureagent.agxjyz.R
+import com.aistudio.futureagent.agxjyz.data.*
+import com.aistudio.futureagent.agxjyz.data.room.AgentRepository
+import com.aistudio.futureagent.agxjyz.data.room.AppDatabase
+import com.aistudio.futureagent.agxjyz.data.room.ChatMessageEntity
 import com.aistudio.futureagent.agxjyz.security.AuditLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
+
+enum class FloatingState {
+    STANDBY,
+    LISTENING,
+    PROCESSING,
+    SPEAKING
+}
 
 class AgentListeningService : Service() {
 
@@ -64,6 +82,20 @@ class AgentListeningService : Service() {
             context.stopService(intent)
         }
     }
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val database by lazy { AppDatabase.getDatabase(applicationContext) }
+    private val repository by lazy {
+        AgentRepository(
+            database.chatDao(),
+            database.taskDao(),
+            database.memoryDao(),
+            database.vectorDao(),
+            database.approvalDao(),
+            database.offlineQueueDao()
+        )
+    }
+    private val voiceHelper by lazy { VoiceHelper(applicationContext) }
 
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
@@ -154,8 +186,8 @@ class AgentListeningService : Service() {
         )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Sanna Agent Active (Microphone Permanently Open)")
-            .setContentText("Hardware microphone is streaming and listening continuously.")
+            .setContentTitle("Sanna Assistant Active (Background Mic)")
+            .setContentText("Background microphone active. Floating widget listening for queries.")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -205,7 +237,7 @@ class AgentListeningService : Service() {
             initSpeechRecognizer()
         }
         startWatchdog()
-        AuditLogger.logEvent(applicationContext, "AGENT_SERVICE", "AgentListeningService permanently active with hardware AudioRecord microphone stream.")
+        AuditLogger.logEvent(applicationContext, "AGENT_SERVICE", "AgentListeningService active in background.")
     }
 
     private fun startWatchdog() {
@@ -230,7 +262,6 @@ class AgentListeningService : Service() {
             val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             val bufferSize = maxOf(minBufferSize, sampleRate * 2)
 
-            // Try VOICE_RECOGNITION first, fallback to MIC
             var record: AudioRecord? = null
             try {
                 record = AudioRecord(
@@ -257,44 +288,42 @@ class AgentListeningService : Service() {
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 record.release()
-                AuditLogger.logEvent(applicationContext, "AUDIO_RECORD_ERROR", "AudioRecord initialization failed.")
                 return
             }
 
             audioRecord = record
+            audioRecord?.startRecording()
             isRecordingAudio = true
-            record.startRecording()
 
             audioThread = Thread({
-                val audioBuffer = ShortArray(1024)
-                while (isRecordingAudio && isRunning) {
-                    val readCount = record.read(audioBuffer, 0, audioBuffer.size)
+                val buffer = ShortArray(1024)
+                while (isRecordingAudio && !Thread.currentThread().isInterrupted) {
+                    val readCount = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                     if (readCount > 0) {
-                        var sumSquares = 0.0
+                        var sum = 0.0
                         var maxAmp = 0
                         for (i in 0 until readCount) {
-                            val sample = audioBuffer[i].toInt()
-                            sumSquares += sample * sample
+                            val sample = buffer[i].toInt()
                             val absVal = abs(sample)
-                            if (absVal > maxAmp) {
-                                maxAmp = absVal
-                            }
+                            if (absVal > maxAmp) maxAmp = absVal
+                            sum += sample * sample
                         }
+                        val rms = sqrt(sum / readCount)
+                        val normalizedLevel = (rms / 32768.0).toFloat().coerceIn(0.0f, 1.0f)
 
-                        val rms = sqrt(sumSquares / readCount)
-                        val normalized = (rms / 8000.0).coerceIn(0.0, 1.0).toFloat()
-
+                        // Real-time Visual Waveform Feedback on floating HUD
                         mainHandler.post {
-                            updateVisualFeedback(normalized, maxAmp)
+                            updateVisualFeedback(normalizedLevel, maxAmp)
                         }
 
-                        // Voice Activity Detection
-                        detectVoiceActivity(normalized, maxAmp)
-                    } else if (readCount < 0) {
-                        // Error reading from microphone hardware
+                        // Voice Activity Detection (VAD)
+                        detectVoiceActivity(normalizedLevel, maxAmp)
+                    } else {
                         try {
-                            Thread.sleep(100)
-                        } catch (ignored: Exception) {}
+                            Thread.sleep(20)
+                        } catch (e: InterruptedException) {
+                            break
+                        }
                     }
                 }
             }, "Sanna-PermanentMicThread").apply {
@@ -302,7 +331,7 @@ class AgentListeningService : Service() {
                 start()
             }
 
-            AuditLogger.logEvent(applicationContext, "AUDIO_STREAM", "Hardware microphone stream permanently OPEN and capturing.")
+            AuditLogger.logEvent(applicationContext, "AUDIO_STREAM", "Hardware microphone stream open.")
         } catch (e: Exception) {
             AuditLogger.logEvent(applicationContext, "AUDIO_STREAM_ERROR", e.message ?: "AudioRecord error")
         }
@@ -326,12 +355,9 @@ class AgentListeningService : Service() {
         } catch (ignored: Exception) {}
     }
 
-    /**
-     * Dynamically updates the floating icon scale and alpha in real-time,
-     * providing continuous visible proof that the microphone is active and hearing sound.
-     */
     private fun updateVisualFeedback(normalizedLevel: Float, maxAmp: Int) {
         val icon = floatingIcon ?: return
+        if (isSpeechRecognizerBusy) return
         if (maxAmp > 1200 || normalizedLevel > 0.05f) {
             val scale = 1.0f + (normalizedLevel * 0.45f).coerceIn(0.08f, 0.45f)
             icon.animate()
@@ -350,6 +376,45 @@ class AgentListeningService : Service() {
         }
     }
 
+    private fun updateFloatingState(state: FloatingState) {
+        val icon = floatingIcon ?: return
+        when (state) {
+            FloatingState.STANDBY -> {
+                icon.animate()
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .alpha(0.9f)
+                    .rotation(0f)
+                    .setDuration(150)
+                    .start()
+            }
+            FloatingState.LISTENING -> {
+                icon.animate()
+                    .scaleX(1.3f)
+                    .scaleY(1.3f)
+                    .alpha(1.0f)
+                    .setDuration(120)
+                    .start()
+            }
+            FloatingState.PROCESSING -> {
+                icon.animate()
+                    .scaleX(1.15f)
+                    .scaleY(1.15f)
+                    .alpha(0.7f)
+                    .setDuration(180)
+                    .start()
+            }
+            FloatingState.SPEAKING -> {
+                icon.animate()
+                    .scaleX(1.25f)
+                    .scaleY(1.25f)
+                    .alpha(1.0f)
+                    .setDuration(120)
+                    .start()
+            }
+        }
+    }
+
     /**
      * Real-time Voice Activity Detection (VAD)
      */
@@ -364,12 +429,11 @@ class AgentListeningService : Service() {
 
             if (speechFramesCount >= 3 && !isSpeechActive) {
                 isSpeechActive = true
-                AuditLogger.logEvent(applicationContext, "VAD_SPEECH_START", "Voice utterance detected by permanent mic.")
+                AuditLogger.logEvent(applicationContext, "VAD_SPEECH_START", "Voice utterance detected.")
             }
         } else {
             if (isSpeechActive) {
                 silenceFramesCount++
-                // After ~1.2 seconds of silence following speech
                 if (silenceFramesCount > 18 && (now - lastSpeechDetectedTime) > 1200L) {
                     isSpeechActive = false
                     speechFramesCount = 0
@@ -384,9 +448,8 @@ class AgentListeningService : Service() {
     }
 
     private fun onUtteranceDetected() {
-        // Trigger speech recognition / interactive voice processing
         if (!isSpeechRecognizerBusy) {
-            triggerInteractiveListening()
+            startBackgroundListening()
         }
     }
 
@@ -452,8 +515,8 @@ class AgentListeningService : Service() {
                         }
                         MotionEvent.ACTION_UP -> {
                             if (!isMoved) {
-                                // Tapping opens the interactive prompt HUD while keeping the permanent stream running
-                                triggerInteractiveListening()
+                                // Tap triggers background speech capture directly in the service
+                                startBackgroundListening()
                             }
                             return true
                         }
@@ -485,30 +548,40 @@ class AgentListeningService : Service() {
                     speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                         override fun onReadyForSpeech(params: Bundle?) {
                             isSpeechRecognizerBusy = true
+                            updateFloatingState(FloatingState.LISTENING)
                         }
 
-                        override fun onBeginningOfSpeech() {}
-                        override fun onRmsChanged(rmsdB: Float) {}
+                        override fun onBeginningOfSpeech() {
+                            updateFloatingState(FloatingState.LISTENING)
+                        }
+
+                        override fun onRmsChanged(rmsdB: Float) {
+                            if (isSpeechRecognizerBusy) {
+                                val scale = 1.0f + (rmsdB.coerceIn(0f, 10f) / 10f) * 0.4f
+                                floatingIcon?.animate()?.scaleX(scale)?.scaleY(scale)?.setDuration(50)?.start()
+                            }
+                        }
+
                         override fun onBufferReceived(buffer: ByteArray?) {}
-                        override fun onEndOfSpeech() {}
+
+                        override fun onEndOfSpeech() {
+                            updateFloatingState(FloatingState.PROCESSING)
+                        }
 
                         override fun onError(error: Int) {
                             isSpeechRecognizerBusy = false
+                            updateFloatingState(FloatingState.STANDBY)
                         }
 
                         override fun onResults(results: Bundle?) {
                             isSpeechRecognizerBusy = false
                             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            if (!matches.isNullOrEmpty()) {
-                                val spokenText = matches[0]
-                                if (spokenText.isNotBlank()) {
-                                    AuditLogger.logEvent(applicationContext, "VOICE_COMMAND", "Recognized: $spokenText")
-                                    val chatIntent = Intent(this@AgentListeningService, MainActivity::class.java).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                                        putExtra("VOICE_QUERY", spokenText)
-                                    }
-                                    startActivity(chatIntent)
-                                }
+                            val spokenText = matches?.firstOrNull { it.isNotBlank() }
+                            if (!spokenText.isNullOrBlank()) {
+                                updateFloatingState(FloatingState.PROCESSING)
+                                processBackgroundVoiceQuery(spokenText)
+                            } else {
+                                updateFloatingState(FloatingState.STANDBY)
                             }
                         }
 
@@ -522,15 +595,122 @@ class AgentListeningService : Service() {
         }
     }
 
-    private fun triggerInteractiveListening() {
-        try {
-            val chatIntent = Intent(this@AgentListeningService, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra("TRIGGER_VOICE_POPUP", true)
+    /**
+     * Starts listening in the background service without launching or foregrounding MainActivity.
+     */
+    private fun startBackgroundListening() {
+        mainHandler.post {
+            try {
+                if (speechRecognizer == null) {
+                    initSpeechRecognizer()
+                }
+                if (!isSpeechRecognizerBusy) {
+                    isSpeechRecognizerBusy = true
+                    updateFloatingState(FloatingState.LISTENING)
+                    speechRecognizer?.startListening(speechRecognizerIntent)
+                }
+            } catch (e: Exception) {
+                isSpeechRecognizerBusy = false
+                updateFloatingState(FloatingState.STANDBY)
             }
-            startActivity(chatIntent)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Sanna Listening...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Executes the user query in the background:
+     * 1. Saves user input to Room DB
+     * 2. Runs tool/AI processing
+     * 3. Saves assistant response to Room DB
+     * 4. Speaks the answer aloud via TextToSpeech
+     * 5. Keeps MainActivity closed/minimized
+     */
+    private fun processBackgroundVoiceQuery(spokenText: String) {
+        serviceScope.launch {
+            try {
+                AuditLogger.logEvent(applicationContext, "BACKGROUND_VOICE_COMMAND", "Recognized: $spokenText")
+
+                // 1. Insert user message into Room DB
+                val userMsgId = System.currentTimeMillis().toString()
+                repository.insertMessage(
+                    ChatMessageEntity(
+                        id = userMsgId,
+                        isUser = true,
+                        text = spokenText,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+
+                val secureKey = SecureStorage.getApiKey(this@AgentListeningService)
+                val apiKey = if (secureKey.isNotBlank()) secureKey else BuildConfig.GEMINI_API_KEY
+                val memories = try { repository.allMemories.firstOrNull() ?: emptyList() } catch (e: Exception) { emptyList() }
+
+                val responseText = if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
+                    try {
+                        val memoryContext = if (memories.isNotEmpty()) {
+                            "User Memory Context:\n" + memories.take(10).joinToString("\n") { "• ${it.key}: ${it.value}" } + "\n\n"
+                        } else ""
+
+                        val req = GeminiRequest(
+                            contents = listOf(Content(role = "user", parts = listOf(Part(text = memoryContext + spokenText)))),
+                            systemInstruction = Content(parts = listOf(Part(text = "You are Sanna, an autonomous Android AI assistant. Provide concise, clear, voice-friendly answers.")))
+                        )
+                        val resp = GeminiFallbackExecutor.generateWithFallback(this@AgentListeningService, apiKey, req)
+                        val reply = resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                        reply ?: OfflineRulesEngine.processOfflineQuery(
+                            this@AgentListeningService,
+                            spokenText,
+                            memories.map { UserMemoryItem(it.key, it.value) }
+                        )
+                    } catch (e: Exception) {
+                        OfflineRulesEngine.processOfflineQuery(
+                            this@AgentListeningService,
+                            spokenText,
+                            memories.map { UserMemoryItem(it.key, it.value) }
+                        )
+                    }
+                } else {
+                    OfflineRulesEngine.processOfflineQuery(
+                        this@AgentListeningService,
+                        spokenText,
+                        memories.map { UserMemoryItem(it.key, it.value) }
+                    )
+                }
+
+                // 3. Insert assistant response into Room DB
+                val assistantMsgId = (System.currentTimeMillis() + 1).toString()
+                repository.insertMessage(
+                    ChatMessageEntity(
+                        id = assistantMsgId,
+                        isUser = false,
+                        text = responseText,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+
+                // 4. Speak response via TTS
+                val cleanSpeech = responseText
+                    .replace(Regex("⚡|\\[.*?\\]|\\*|#|_|`"), "")
+                    .replace(Regex("\\(.*?\\)"), "")
+                    .trim()
+
+                mainHandler.post {
+                    updateFloatingState(FloatingState.SPEAKING)
+                }
+
+                voiceHelper.speak(cleanSpeech)
+                AuditLogger.logEvent(applicationContext, "BACKGROUND_VOICE_RESPONSE", "Replied: ${cleanSpeech.take(50)}")
+
+                delay(1500)
+                mainHandler.post {
+                    updateFloatingState(FloatingState.STANDBY)
+                }
+            } catch (e: Exception) {
+                AuditLogger.logEvent(applicationContext, "BACKGROUND_VOICE_ERROR", e.message ?: "Processing error")
+                voiceHelper.speak("Error processing voice directive.")
+                mainHandler.post {
+                    updateFloatingState(FloatingState.STANDBY)
+                }
+            }
         }
     }
 
@@ -541,7 +721,7 @@ class AgentListeningService : Service() {
                 "Sanna Foreground Service Channel",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps Sanna permanent microphone listening and floating overlay active"
+                description = "Keeps Sanna background microphone listening and floating overlay active"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(serviceChannel)
@@ -553,6 +733,7 @@ class AgentListeningService : Service() {
         isRunning = false
         mainHandler.removeCallbacksAndMessages(null)
         stopAudioRecordStream()
+        serviceScope.cancel()
 
         try {
             speechRecognizer?.destroy()
@@ -571,6 +752,6 @@ class AgentListeningService : Service() {
             }
         } catch (ignored: Exception) {}
 
-        AuditLogger.logEvent(applicationContext, "AGENT_SERVICE", "AgentListeningService destroyed and permanent mic released.")
+        AuditLogger.logEvent(applicationContext, "AGENT_SERVICE", "AgentListeningService destroyed.")
     }
 }
