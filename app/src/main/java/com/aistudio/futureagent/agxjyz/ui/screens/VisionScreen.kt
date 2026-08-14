@@ -204,19 +204,19 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                             var success = false
                                             
                                             val preferredModel = com.aistudio.futureagent.agxjyz.data.SecureStorage.getSelectedModel(context)
-                                            val fallbackModels = listOf(preferredModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro").distinct()
+                                            val fallbackModels = listOf(preferredModel, "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash-image", "gemini-2.5-flash").distinct()
                                             var currentModelIndex = 0
                                             
                                             while (attempt < maxAttempts && !success) {
                                                 try {
                                                     attempt++
-                                                    val apiKey = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.getEffectiveApiKey(context)
+                                                    val model = fallbackModels[currentModelIndex]
+                                                    val apiKey = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.getEffectiveKeyForModel(context, model)
                                                     if (apiKey.isBlank()) {
                                                         analysisResult = "No API key configured. Please enter your API key in Settings or AI Studio Secrets."
                                                         success = true
                                                         break
                                                     }
-                                                    val model = fallbackModels[currentModelIndex]
                                                     
                                                     val request = com.aistudio.futureagent.agxjyz.api.GenerateContentRequest(
                                                         contents = listOf(

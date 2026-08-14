@@ -428,14 +428,9 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                 // Model Selector & Auto-Fallback
                 item {
                     val activeDisplayName = SecureStorage.getModelDisplayName(selectedModel)
-                    val activeProvider = when {
-                        selectedModel.contains("llama") || selectedModel.contains("meta") -> "Meta (Llama)"
-                        selectedModel.contains("gemini") -> "Gemini"
-                        selectedModel.startsWith("gpt-") || selectedModel.startsWith("o1") || selectedModel.startsWith("o3") -> "OpenAI"
-                        selectedModel.contains("claude") -> "Anthropic"
-                        selectedModel.contains("groq") || selectedModel.contains("mixtral") || selectedModel.contains("gemma") -> "Groq"
-                        else -> "LLM"
-                    }
+                    val activeProvider = SecureStorage.getModelProvider(selectedModel)
+                    val apiKeyManager = remember { com.aistudio.futureagent.agxjyz.utils.ApiKeyManager(context) }
+                    val isCurrentProviderKeyConfigured = apiKeyManager.isProviderConfigured(activeProvider)
 
                     val filteredModels = remember(availableModels, providerFilter) {
                         when (providerFilter) {
@@ -443,12 +438,12 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                             "GEMINI" -> availableModels.filter { it.contains("gemini") }
                             "OPENAI" -> availableModels.filter { it.startsWith("gpt-") || it.startsWith("o1") || it.startsWith("o3") }
                             "ANTHROPIC" -> availableModels.filter { it.contains("claude") }
-                            "GROQ" -> availableModels.filter { it.contains("versatile") || it.contains("instant") || it.contains("specdec") || it.contains("mixtral") }
+                            "GROQ" -> availableModels.filter { it.contains("versatile") || it.contains("instant") || it.contains("specdec") || it.contains("deepseek") || it.contains("mixtral") }
                             else -> availableModels
                         }
                     }
 
-                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "LLM MODELS & MULTI-PROVIDER FAILOVER") {
+                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "LLM MODELS & PROVIDER API KEY MAPPING") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -457,11 +452,18 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Active Model: $activeDisplayName", style = MaterialTheme.typography.titleMedium, color = NeonCyan)
-                                    Text("Provider: $activeProvider | ${availableModels.size} Models Discovered", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Provider: $activeProvider", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                        Text(
+                                            if (isCurrentProviderKeyConfigured) "• API Key Active" else "• Key Not Configured",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isCurrentProviderKeyConfigured) Color(0xFF10B981) else Color(0xFFF59E0B)
+                                        )
+                                    }
                                 }
                             }
                             Text(
-                                "Sanna automatically cycles through models and fails over across active provider API keys on quota limits.",
+                                "Each model automatically routes to its provider's configured API key with multi-tier failover.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.LightGray
                             )
@@ -471,7 +473,7 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.padding(vertical = 4.dp)
                             ) {
-                                val filterTabs = listOf("ALL", "META", "GEMINI", "OPENAI", "ANTHROPIC", "GROQ")
+                                val filterTabs = listOf("ALL", "GEMINI", "META", "OPENAI", "ANTHROPIC", "GROQ")
                                 items(filterTabs) { tab ->
                                     val isSelected = (providerFilter == tab)
                                     Surface(
@@ -494,15 +496,8 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                             
                             filteredModels.forEach { model ->
                                 val displayName = SecureStorage.getModelDisplayName(model)
-                                val itemProvider = when {
-                                    model.contains("llama") || model.contains("meta") -> "Meta"
-                                    model.contains("gemini") -> "Gemini"
-                                    model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") -> "OpenAI"
-                                    model.contains("claude") -> "Claude"
-                                    model.contains("versatile") || model.contains("instant") || model.contains("mixtral") -> "Groq"
-                                    else -> "LLM"
-                                }
-
+                                val itemProvider = SecureStorage.getModelProvider(model)
+                                val hasProviderKey = apiKeyManager.isProviderConfigured(itemProvider)
                                 val isItemActive = (model == selectedModel)
 
                                 Surface(
@@ -511,7 +506,7 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                         .clickable {
                                             selectedModel = model
                                             viewModel.selectModel(model)
-                                            savedMessage = "Selected model updated to $displayName"
+                                            savedMessage = "Selected model updated to $displayName ($itemProvider)"
                                         },
                                     color = if (isItemActive) Color(0xFF0A2E44) else Color.Transparent,
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
@@ -530,10 +525,10 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                         ) {
                                             Surface(
                                                 color = when (itemProvider) {
-                                                    "Meta" -> Color(0xFF0064E0).copy(alpha = 0.3f)
+                                                    "Meta (Llama)" -> Color(0xFF0064E0).copy(alpha = 0.3f)
                                                     "Gemini" -> Color(0xFF1E88E5).copy(alpha = 0.3f)
                                                     "OpenAI" -> Color(0xFF10A37F).copy(alpha = 0.3f)
-                                                    "Claude" -> Color(0xFFD97706).copy(alpha = 0.3f)
+                                                    "Anthropic" -> Color(0xFFD97706).copy(alpha = 0.3f)
                                                     "Groq" -> Color(0xFFF97316).copy(alpha = 0.3f)
                                                     else -> Color(0xFF1E3A4C)
                                                 },
@@ -543,10 +538,10 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                                     text = itemProvider,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = when (itemProvider) {
-                                                        "Meta" -> Color(0xFF60A5FA)
+                                                        "Meta (Llama)" -> Color(0xFF60A5FA)
                                                         "Gemini" -> NeonCyan
                                                         "OpenAI" -> Color(0xFF34D399)
-                                                        "Claude" -> Color(0xFFFBBF24)
+                                                        "Anthropic" -> Color(0xFFFBBF24)
                                                         "Groq" -> Color(0xFFFB923C)
                                                         else -> Color.White
                                                     },
@@ -560,11 +555,18 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     color = if (isItemActive) NeonCyan else Color.White
                                                 )
-                                                Text(
-                                                    model,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = Color.Gray
-                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    Text(
+                                                        model,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color.Gray
+                                                    )
+                                                    Text(
+                                                        if (hasProviderKey) "• Key Ready" else "• Key Needed",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (hasProviderKey) Color(0xFF10B981) else Color(0xFF6B7280)
+                                                    )
+                                                }
                                             }
                                         }
 
@@ -573,7 +575,7 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                             onClick = {
                                                 selectedModel = model
                                                 viewModel.selectModel(model)
-                                                savedMessage = "Selected model updated to $displayName"
+                                                savedMessage = "Selected model updated to $displayName ($itemProvider)"
                                             },
                                             colors = RadioButtonDefaults.colors(selectedColor = NeonCyan)
                                         )

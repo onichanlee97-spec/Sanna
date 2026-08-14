@@ -147,12 +147,24 @@ object GeminiFallbackExecutor {
             throw RuntimeException("No valid API key configured. Please enter your API key in settings or AI Studio.")
         }
 
-        val currentIndex = apiKeyManager.getCurrentKeyIndex().coerceIn(0, (allKeys.size - 1).coerceAtLeast(0))
-        val keysToTry = mutableListOf<Pair<Int, String>>()
-        for (i in 0 until allKeys.size) {
-            val idx = (currentIndex + i) % allKeys.size
-            keysToTry.add(Pair(idx, allKeys[idx]))
+        val selectedModel = SecureStorage.getSelectedModel(context)
+        val targetProvider = SecureStorage.getModelProvider(selectedModel)
+
+        // Prioritize keys matching the selected model's provider first
+        val matchingKeys = mutableListOf<Pair<Int, String>>()
+        val otherKeys = mutableListOf<Pair<Int, String>>()
+
+        for (i in allKeys.indices) {
+            val key = allKeys[i]
+            val prov = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(key)
+            if (prov.equals(targetProvider, ignoreCase = true) || (targetProvider == "Gemini" && prov == "Gemini")) {
+                matchingKeys.add(Pair(i, key))
+            } else {
+                otherKeys.add(Pair(i, key))
+            }
         }
+
+        val keysToTry = matchingKeys + otherKeys
 
         var lastException: Exception? = null
 
@@ -161,7 +173,7 @@ object GeminiFallbackExecutor {
             val providerName = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(currentKey)
 
             // Select models for this provider
-            val modelsForProvider = getModelsForProvider(providerName, SecureStorage.getSelectedModel(context))
+            val modelsForProvider = getModelsForProvider(providerName, selectedModel)
 
             for (modelIndex in modelsForProvider.indices) {
                 val model = modelsForProvider[modelIndex]
@@ -211,37 +223,60 @@ object GeminiFallbackExecutor {
             "Meta (Llama)" -> {
                 val list = listOf(
                     "llama-3.3-70b-instruct",
+                    "llama-3.1-405b-instruct",
                     "llama-3.1-70b-instruct",
                     "llama-3.1-8b-instruct",
+                    "llama-3.2-11b-vision-instruct",
                     "llama-3.2-3b-instruct",
+                    "llama-3.2-1b-instruct",
                     "meta-llama/Llama-3.3-70B-Instruct"
                 )
                 if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
             }
-            "Anthropic" -> listOf(
-                "claude-3-5-sonnet-20241022",
-                "claude-3-5-haiku-20241022",
-                "claude-3-opus-20240229"
-            )
-            "OpenAI" -> {
-                val list = listOf("gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo")
+            "Anthropic" -> {
+                val list = listOf(
+                    "claude-3-7-sonnet-20250219",
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-5-haiku-20241022",
+                    "claude-3-opus-20240229"
+                )
                 if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
             }
-            "Groq" -> listOf(
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768"
-            )
+            "OpenAI" -> {
+                val list = listOf("gpt-4o", "gpt-4o-mini", "o3-mini", "o1-preview", "o1-mini")
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
+            "Groq" -> {
+                val list = listOf(
+                    "llama-3.3-70b-versatile",
+                    "deepseek-r1-distill-llama-70b",
+                    "llama-3.1-8b-instant",
+                    "mixtral-8x7b-32768"
+                )
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
+            "Mistral" -> {
+                val list = listOf("mistral-large-latest", "mistral-small-latest", "codestral-latest")
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
+            "Perplexity" -> {
+                val list = listOf("sonar-pro", "sonar")
+                if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
+            }
             else -> {
                 // Gemini & default
-                val standardGemini = listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro")
-                val cleanSelected = if (currentSelected == "gemini-3.6-flash" || currentSelected == "gemini-3.5-flash" || currentSelected == "gemini-3.5-flash-lite") {
-                    "gemini-2.5-flash"
-                } else {
-                    currentSelected
-                }
-                if (standardGemini.contains(cleanSelected)) {
-                    listOf(cleanSelected) + standardGemini.filter { it != cleanSelected }
+                val standardGemini = listOf(
+                    "gemini-2.5-flash",
+                    "gemini-3.7-flash",
+                    "gemini-3.5-flash",
+                    "gemini-3.1-pro-preview",
+                    "gemini-3.1-flash-lite-preview",
+                    "gemini-flash-latest",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-flash-image"
+                )
+                if (standardGemini.contains(currentSelected)) {
+                    listOf(currentSelected) + standardGemini.filter { it != currentSelected }
                 } else {
                     standardGemini
                 }

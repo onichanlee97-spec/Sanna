@@ -49,6 +49,16 @@ class ApiKeyManager(private val context: Context) {
             return ""
         }
 
+        fun getEffectiveKeyForModel(context: Context, modelId: String): String {
+            val manager = ApiKeyManager(context)
+            val targetProvider = SecureStorage.getModelProvider(modelId)
+            val providerKey = manager.getKeyForProvider(targetProvider)
+            if (!providerKey.isNullOrBlank() && providerKey != "MY_GEMINI_API_KEY") {
+                return providerKey
+            }
+            return getEffectiveApiKey(context)
+        }
+
         fun getEffectiveKeys(context: Context): List<String> {
             val manager = ApiKeyManager(context)
             val list = manager.getAllKeys().filter { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }.toMutableList()
@@ -119,6 +129,46 @@ class ApiKeyManager(private val context: Context) {
             }
         }
         return apiKeys.toList()
+    }
+
+    @Synchronized
+    fun getKeysForProvider(provider: String): List<String> {
+        val all = getAllKeys()
+        return all.filter { detectProvider(it).equals(provider, ignoreCase = true) }
+    }
+
+    @Synchronized
+    fun getKeyForProvider(provider: String): String? {
+        val matching = getKeysForProvider(provider)
+        if (matching.isNotEmpty()) return matching.first()
+        // If requesting Gemini, check fallback
+        if (provider.equals("Gemini", ignoreCase = true)) {
+            val sec = SecureStorage.getApiKey(context)
+            if (sec.isNotBlank() && sec != "MY_GEMINI_API_KEY") return sec
+            val bc = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+            if (bc.isNotBlank() && bc != "MY_GEMINI_API_KEY") return bc
+        }
+        return null
+    }
+
+    @Synchronized
+    fun isProviderConfigured(provider: String): Boolean {
+        return getKeyForProvider(provider) != null
+    }
+
+    @Synchronized
+    fun getConfiguredProviders(): List<String> {
+        val keys = getAllKeys()
+        val providers = keys.map { detectProvider(it) }.toMutableList()
+        val sec = SecureStorage.getApiKey(context)
+        if (sec.isNotBlank() && sec != "MY_GEMINI_API_KEY") {
+            providers.add(detectProvider(sec))
+        }
+        val bc = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+        if (bc.isNotBlank() && bc != "MY_GEMINI_API_KEY") {
+            providers.add("Gemini")
+        }
+        return providers.distinct()
     }
 
     @Synchronized

@@ -76,7 +76,17 @@ class ApiModelDiscovery(private val context: Context) {
             breakdown["Meta (Llama)"] = defaultMeta.toMutableList()
             allDiscovered.addAll(defaultMeta)
 
-            val defaultGemini = listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-3.6-flash")
+            val defaultGemini = listOf(
+                "gemini-3.7-flash",
+                "gemini-3.5-flash",
+                "gemini-3.1-pro-preview",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-flash-latest",
+                "gemini-2.5-flash",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash-image",
+                "gemini-3.1-flash-image-preview"
+            )
             breakdown["Gemini"] = defaultGemini.toMutableList()
             allDiscovered.addAll(defaultGemini)
 
@@ -265,12 +275,15 @@ class ApiModelDiscovery(private val context: Context) {
 
         if (models.isEmpty()) {
             models.addAll(listOf(
+                "gemini-3.7-flash",
+                "gemini-3.5-flash",
+                "gemini-3.1-pro-preview",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-flash-latest",
                 "gemini-2.5-flash",
                 "gemini-2.5-pro",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-1.5-pro",
-                "gemini-3.6-flash"
+                "gemini-2.5-flash-image",
+                "gemini-3.1-flash-image-preview"
             ))
         }
         return models

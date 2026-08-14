@@ -15,21 +15,46 @@ object SecureStorage {
     private const val KEY_CUSTOM_PROMPT = "custom_system_prompt"
 
     val AVAILABLE_MODELS = listOf(
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite-preview",
+        "gemini-flash-latest",
         "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
         "gemini-2.5-pro",
-        "gemini-1.5-pro",
+        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image-preview",
         "llama-3.3-70b-instruct",
+        "llama-3.1-405b-instruct",
         "llama-3.1-70b-instruct",
         "llama-3.1-8b-instruct",
+        "llama-3.2-11b-vision-instruct",
         "llama-3.2-3b-instruct",
         "llama-3.2-1b-instruct",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
         "gpt-4o",
         "gpt-4o-mini",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022"
+        "o3-mini",
+        "o1-preview",
+        "llama-3.3-70b-versatile",
+        "deepseek-r1-distill-llama-70b"
     )
+
+    fun getModelProvider(modelId: String): String {
+        val lower = modelId.lowercase()
+        return when {
+            lower.startsWith("gemini") || lower.startsWith("veo") -> "Gemini"
+            lower.startsWith("claude") -> "Anthropic"
+            lower.startsWith("gpt-") || lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("chatgpt") -> "OpenAI"
+            lower.contains("versatile") || lower.contains("instant") || lower.contains("specdec") || lower.contains("deepseek") || lower.contains("mixtral") || lower.contains("gemma2") -> "Groq"
+            lower.startsWith("mistral") || lower.startsWith("codestral") -> "Mistral"
+            lower.startsWith("sonar") -> "Perplexity"
+            lower.contains("llama") || lower.contains("meta") -> "Meta (Llama)"
+            else -> "Custom / LLM"
+        }
+    }
 
     fun getAvailableModels(context: Context): List<String> {
         val discovered = try {
@@ -42,17 +67,15 @@ object SecureStorage {
 
     fun getModelDisplayName(modelId: String): String {
         return when (modelId) {
-            "gemini-3.6-flash" -> "Gemini 3.6 Flash"
-            "gemini-3.5-flash-lite" -> "Gemini 3.5 Flash Lite"
+            "gemini-3.7-flash" -> "Gemini 3.7 Flash"
             "gemini-3.5-flash" -> "Gemini 3.5 Flash"
             "gemini-3.1-pro-preview" -> "Gemini 3.1 Pro Preview"
-            "gemini-3.1-flash-lite" -> "Gemini 3.1 Flash Lite"
-            "gemini-3-flash-preview" -> "Gemini 3 Flash Preview"
+            "gemini-3.1-flash-lite-preview" -> "Gemini 3.1 Flash Lite"
+            "gemini-flash-latest" -> "Gemini Flash Latest"
             "gemini-2.5-flash" -> "Gemini 2.5 Flash"
             "gemini-2.5-pro" -> "Gemini 2.5 Pro"
-            "gemini-2.0-flash" -> "Gemini 2.0 Flash"
-            "gemini-1.5-flash" -> "Gemini 1.5 Flash"
-            "gemini-1.5-pro" -> "Gemini 1.5 Pro"
+            "gemini-2.5-flash-image" -> "Gemini 2.5 Flash Image"
+            "gemini-3.1-flash-image-preview" -> "Gemini 3.1 Flash Image HD"
             "llama-3.3-70b-instruct" -> "Meta Llama 3.3 70B"
             "llama-3.1-405b-instruct" -> "Meta Llama 3.1 405B"
             "llama-3.1-70b-instruct" -> "Meta Llama 3.1 70B"
@@ -128,8 +151,8 @@ object SecureStorage {
     }
 
     fun saveSelectedModel(context: Context, model: String) {
-        val validModel = if (model == "gemini-3.6-flash" || model == "gemini-3.5-flash" || model == "gemini-3.5-flash-lite") {
-            "gemini-2.5-flash"
+        val validModel = if (model.isBlank() || model == "gemini-1.5-flash" || model == "gemini-1.5-pro" || model == "gemini-2.0-flash") {
+            "gemini-3.7-flash"
         } else {
             model
         }
@@ -139,10 +162,10 @@ object SecureStorage {
 
     fun getSelectedModel(context: Context): String {
         val model = getPrefs(context).getString(KEY_SELECTED_MODEL, null)
-            ?: getStandardPrefs(context).getString(KEY_SELECTED_MODEL, "gemini-2.5-flash")
-            ?: "gemini-2.5-flash"
-        return if (model == "gemini-3.6-flash" || model == "gemini-3.5-flash" || model == "gemini-3.5-flash-lite") {
-            "gemini-2.5-flash"
+            ?: getStandardPrefs(context).getString(KEY_SELECTED_MODEL, "gemini-3.7-flash")
+            ?: "gemini-3.7-flash"
+        return if (model.isBlank() || model == "gemini-1.5-flash" || model == "gemini-1.5-pro" || model == "gemini-2.0-flash") {
+            "gemini-3.7-flash"
         } else {
             model
         }
