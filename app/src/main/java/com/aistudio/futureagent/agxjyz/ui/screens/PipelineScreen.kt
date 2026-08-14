@@ -3,6 +3,7 @@ package com.aistudio.futureagent.agxjyz.ui.screens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,10 +31,17 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
     val coroutineScope = rememberCoroutineScope()
 
     val apiKeyManager = remember { ApiKeyManager(context) }
+    val modelDiscovery = remember { com.aistudio.futureagent.agxjyz.agent.ApiModelDiscovery(context) }
     var inputApiKeys by remember { mutableStateOf("") }
     var keyListVersion by remember { mutableIntStateOf(0) }
+    var modelDiscoveryVersion by remember { mutableIntStateOf(0) }
+    var isDiscoveringModels by remember { mutableStateOf(false) }
+    var providerFilter by remember { mutableStateOf("ALL") }
+
     val allApiKeys = remember(keyListVersion) { apiKeyManager.getAllKeys() }
     val activeKeyIndex = remember(keyListVersion) { apiKeyManager.getCurrentKeyIndex() }
+    val availableModels = remember(modelDiscoveryVersion, keyListVersion) { SecureStorage.getAvailableModels(context) }
+    val providerBreakdown = remember(modelDiscoveryVersion, keyListVersion) { modelDiscovery.getDiscoveredModelsByProvider() }
 
     var apiKey by remember { mutableStateOf(SecureStorage.getApiKey(context)) }
     var oauthToken by remember { mutableStateOf(SecureStorage.getOAuthToken(context)) }
@@ -420,36 +428,156 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                 // Model Selector & Auto-Fallback
                 item {
                     val activeDisplayName = SecureStorage.getModelDisplayName(selectedModel)
-                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "GEMINI MODELS & QUOTA FALLBACK") {
+                    val activeProvider = when {
+                        selectedModel.contains("llama") || selectedModel.contains("meta") -> "Meta (Llama)"
+                        selectedModel.contains("gemini") -> "Gemini"
+                        selectedModel.startsWith("gpt-") || selectedModel.startsWith("o1") || selectedModel.startsWith("o3") -> "OpenAI"
+                        selectedModel.contains("claude") -> "Anthropic"
+                        selectedModel.contains("groq") || selectedModel.contains("mixtral") || selectedModel.contains("gemma") -> "Groq"
+                        else -> "LLM"
+                    }
+
+                    val filteredModels = remember(availableModels, providerFilter) {
+                        when (providerFilter) {
+                            "META" -> availableModels.filter { it.contains("llama") || it.contains("meta") }
+                            "GEMINI" -> availableModels.filter { it.contains("gemini") }
+                            "OPENAI" -> availableModels.filter { it.startsWith("gpt-") || it.startsWith("o1") || it.startsWith("o3") }
+                            "ANTHROPIC" -> availableModels.filter { it.contains("claude") }
+                            "GROQ" -> availableModels.filter { it.contains("versatile") || it.contains("instant") || it.contains("specdec") || it.contains("mixtral") }
+                            else -> availableModels
+                        }
+                    }
+
+                    HudFrame(modifier = Modifier.fillMaxWidth(), label = "LLM MODELS & MULTI-PROVIDER FAILOVER") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Active Model: $activeDisplayName", style = MaterialTheme.typography.titleMedium, color = NeonCyan)
-                            Text("Sanna automatically cycles through available models on HTTP 429 quota limits.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Active Model: $activeDisplayName", style = MaterialTheme.typography.titleMedium, color = NeonCyan)
+                                    Text("Provider: $activeProvider | ${availableModels.size} Models Discovered", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                }
+                            }
+                            Text(
+                                "Sanna automatically cycles through models and fails over across active provider API keys on quota limits.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.LightGray
+                            )
+
+                            // Provider Filter Chips
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                val filterTabs = listOf("ALL", "META", "GEMINI", "OPENAI", "ANTHROPIC", "GROQ")
+                                items(filterTabs) { tab ->
+                                    val isSelected = (providerFilter == tab)
+                                    Surface(
+                                        modifier = Modifier.clickable { providerFilter = tab },
+                                        color = if (isSelected) NeonCyan else Color(0xFF0F2B3C),
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) NeonCyan else Color(0xFF1E3A4C))
+                                    ) {
+                                        Text(
+                                            text = tab,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isSelected) Color.Black else Color.White,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(Modifier.height(4.dp))
                             
-                            SecureStorage.AVAILABLE_MODELS.forEach { model ->
+                            filteredModels.forEach { model ->
                                 val displayName = SecureStorage.getModelDisplayName(model)
-                                Row(
-                                    Modifier
+                                val itemProvider = when {
+                                    model.contains("llama") || model.contains("meta") -> "Meta"
+                                    model.contains("gemini") -> "Gemini"
+                                    model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") -> "OpenAI"
+                                    model.contains("claude") -> "Claude"
+                                    model.contains("versatile") || model.contains("instant") || model.contains("mixtral") -> "Groq"
+                                    else -> "LLM"
+                                }
+
+                                val isItemActive = (model == selectedModel)
+
+                                Surface(
+                                    modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
                                             selectedModel = model
                                             viewModel.selectModel(model)
                                             savedMessage = "Selected model updated to $displayName"
-                                        }
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(displayName, style = MaterialTheme.typography.bodyMedium, color = if (model == selectedModel) NeonCyan else Color.White)
-                                    RadioButton(
-                                        selected = (model == selectedModel),
-                                        onClick = {
-                                            selectedModel = model
-                                            viewModel.selectModel(model)
-                                            savedMessage = "Selected model updated to $displayName"
                                         },
-                                        colors = RadioButtonDefaults.colors(selectedColor = NeonCyan)
-                                    )
+                                    color = if (isItemActive) Color(0xFF0A2E44) else Color.Transparent,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Surface(
+                                                color = when (itemProvider) {
+                                                    "Meta" -> Color(0xFF0064E0).copy(alpha = 0.3f)
+                                                    "Gemini" -> Color(0xFF1E88E5).copy(alpha = 0.3f)
+                                                    "OpenAI" -> Color(0xFF10A37F).copy(alpha = 0.3f)
+                                                    "Claude" -> Color(0xFFD97706).copy(alpha = 0.3f)
+                                                    "Groq" -> Color(0xFFF97316).copy(alpha = 0.3f)
+                                                    else -> Color(0xFF1E3A4C)
+                                                },
+                                                shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = itemProvider,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = when (itemProvider) {
+                                                        "Meta" -> Color(0xFF60A5FA)
+                                                        "Gemini" -> NeonCyan
+                                                        "OpenAI" -> Color(0xFF34D399)
+                                                        "Claude" -> Color(0xFFFBBF24)
+                                                        "Groq" -> Color(0xFFFB923C)
+                                                        else -> Color.White
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
+
+                                            Column {
+                                                Text(
+                                                    displayName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = if (isItemActive) NeonCyan else Color.White
+                                                )
+                                                Text(
+                                                    model,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+
+                                        RadioButton(
+                                            selected = isItemActive,
+                                            onClick = {
+                                                selectedModel = model
+                                                viewModel.selectModel(model)
+                                                savedMessage = "Selected model updated to $displayName"
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = NeonCyan)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -541,12 +669,16 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                         if (inputApiKeys.isNotBlank()) {
                                             val addedCount = apiKeyManager.importKeys(inputApiKeys)
                                             keyListVersion++
-                                            savedMessage = if (addedCount > 0) {
-                                                "Successfully imported and saved $addedCount API key(s)."
-                                            } else {
-                                                "Keys saved and synchronized."
-                                            }
                                             inputApiKeys = ""
+                                            isDiscoveringModels = true
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val res = modelDiscovery.discoverAllModels(apiKeyManager.getAllKeys())
+                                                withContext(Dispatchers.Main) {
+                                                    isDiscoveringModels = false
+                                                    modelDiscoveryVersion++
+                                                    savedMessage = "Imported $addedCount key(s) and auto-discovered ${res.totalModels} models across ${res.providerCount} provider(s)."
+                                                }
+                                            }
                                         } else {
                                             savedMessage = "Please enter or paste at least one API key."
                                         }
@@ -571,6 +703,74 @@ fun PipelineScreen(viewModel: AgentViewModel = viewModel(), onOpenDrawer: () -> 
                                         border = androidx.compose.foundation.BorderStroke(1.dp, Color.Gray)
                                     ) {
                                         Text("Clear")
+                                    }
+                                }
+                            }
+
+                            // Auto-Import All Provider Models Button
+                            Button(
+                                onClick = {
+                                    isDiscoveringModels = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val res = modelDiscovery.discoverAllModels(apiKeyManager.getAllKeys())
+                                        withContext(Dispatchers.Main) {
+                                            isDiscoveringModels = false
+                                            modelDiscoveryVersion++
+                                            savedMessage = "Auto-imported ${res.totalModels} models from ${res.providerCount} provider(s)."
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F2B3C)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, NeonCyan),
+                                enabled = !isDiscoveringModels
+                            ) {
+                                if (isDiscoveringModels) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = NeonCyan,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Querying Provider APIs...", color = NeonCyan)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Auto-Import Models",
+                                        tint = NeonCyan,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("⚡ Auto-Import Models From All Providers", color = NeonCyan)
+                                }
+                            }
+
+                            // Provider Catalog Summary Chips
+                            if (providerBreakdown.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        "Discovered Model Catalog (${availableModels.size} total):",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.LightGray
+                                    )
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    ) {
+                                        items(providerBreakdown.entries.toList()) { (prov, list) ->
+                                            Surface(
+                                                color = Color(0xFF071926),
+                                                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E3A4C))
+                                            ) {
+                                                Text(
+                                                    "$prov: ${list.size}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = NeonCyan,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

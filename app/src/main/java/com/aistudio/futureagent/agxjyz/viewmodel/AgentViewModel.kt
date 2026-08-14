@@ -26,6 +26,7 @@ import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -129,6 +130,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val savedModel = SecureStorage.getSelectedModel(application)
         _uiState.update { it.copy(selectedModel = savedModel) }
+
+        // Background auto-discovery for all configured provider models
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiKeyManager = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager(application)
+                val allKeys = apiKeyManager.getAllKeys()
+                val discovery = com.aistudio.futureagent.agxjyz.agent.ApiModelDiscovery(application)
+                discovery.discoverAllModels(allKeys)
+            } catch (e: Exception) {
+                // non-blocking
+            }
+        }
 
         // Bind to IPC service
         Intent(application, AgentIpcService::class.java).also { intent ->

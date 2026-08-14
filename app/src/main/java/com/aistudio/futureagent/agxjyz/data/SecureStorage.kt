@@ -36,6 +36,15 @@ object SecureStorage {
         "claude-3-5-sonnet-20241022"
     )
 
+    fun getAvailableModels(context: Context): List<String> {
+        val discovered = try {
+            com.aistudio.futureagent.agxjyz.agent.ApiModelDiscovery(context).getDiscoveredModels()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        return (discovered + AVAILABLE_MODELS).distinct()
+    }
+
     fun getModelDisplayName(modelId: String): String {
         return when (modelId) {
             "gemini-3.6-flash" -> "Gemini 3.6 Flash"
@@ -46,6 +55,7 @@ object SecureStorage {
             "gemini-3-flash-preview" -> "Gemini 3 Flash Preview"
             "gemini-2.5-flash" -> "Gemini 2.5 Flash"
             "gemini-2.5-pro" -> "Gemini 2.5 Pro"
+            "gemini-2.0-flash" -> "Gemini 2.0 Flash"
             "gemini-1.5-flash" -> "Gemini 1.5 Flash"
             "gemini-1.5-pro" -> "Gemini 1.5 Pro"
             "llama-3.3-70b-instruct" -> "Meta Llama 3.3 70B"
@@ -54,10 +64,27 @@ object SecureStorage {
             "llama-3.1-8b-instruct" -> "Meta Llama 3.1 8B"
             "llama-3.2-11b-vision-instruct" -> "Meta Llama 3.2 11B Vision"
             "llama-3.2-3b-instruct" -> "Meta Llama 3.2 3B"
+            "llama-3.2-1b-instruct" -> "Meta Llama 3.2 1B"
+            "llama-3.3-70b-versatile" -> "Groq Llama 3.3 70B"
+            "llama-3.1-70b-specdec" -> "Groq Llama 3.1 70B"
+            "llama-3.1-8b-instant" -> "Groq Llama 3.1 8B"
+            "deepseek-r1-distill-llama-70b" -> "Groq DeepSeek R1 70B"
+            "mixtral-8x7b-32768" -> "Groq Mixtral 8x7B"
             "gpt-4o" -> "OpenAI GPT-4o"
             "gpt-4o-mini" -> "OpenAI GPT-4o Mini"
+            "o1-preview" -> "OpenAI o1 Preview"
+            "o1-mini" -> "OpenAI o1 Mini"
+            "o3-mini" -> "OpenAI o3 Mini"
+            "claude-3-7-sonnet-20250219" -> "Claude 3.7 Sonnet"
             "claude-3-5-sonnet-20241022" -> "Claude 3.5 Sonnet"
-            else -> modelId.replace("-", " ").split(" ").joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+            "claude-3-5-haiku-20241022" -> "Claude 3.5 Haiku"
+            "claude-3-opus-20240229" -> "Claude 3 Opus"
+            "mistral-large-latest" -> "Mistral Large"
+            "mistral-small-latest" -> "Mistral Small"
+            "codestral-latest" -> "Mistral Codestral"
+            "sonar-pro" -> "Perplexity Sonar Pro"
+            "sonar" -> "Perplexity Sonar"
+            else -> modelId.replace("-", " ").replace("_", " ").split(" ").joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
         }
     }
 
