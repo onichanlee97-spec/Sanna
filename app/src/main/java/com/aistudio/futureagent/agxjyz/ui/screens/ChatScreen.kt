@@ -294,6 +294,48 @@ fun ChatScreen(
                         items(state.messages) { msg ->
                             ChatGPTMessageRow(msg = msg)
                         }
+
+                        // Persistent Human-In-The-Loop Approval Queue
+                        items(state.approvals) { approval ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E0E0E)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3F1919)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(8.dp).background(Color.Red, CircleShape))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("🛡️ PENDING SECURITY AUTHORIZATION", style = MaterialTheme.typography.labelSmall, color = Color.Red, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Action: ${approval.actionName}", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                                    Text("Risk Level: ${approval.riskLevel}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    Text("Details: ${approval.payload.take(120)}...", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                                    Spacer(Modifier.height(12.dp))
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = { onConfirmAction() }, // Uses active dialog trigger
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("AUTHORIZE", color = Color.Black, fontSize = androidx.compose.ui.unit.TextUnit.Unspecified)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { onCancelAction() }, // Uses active dialog trigger
+                                            modifier = Modifier.weight(1f),
+                                            border = BorderStroke(1.dp, Color.Red),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("DENY", color = Color.Red)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if (state.isProcessing) {
                             item {
                                 Row(

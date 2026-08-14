@@ -65,3 +65,21 @@ interface VectorDao {
     @Query("DELETE FROM vector_store")
     suspend fun clearVectors()
 }
+
+@Dao
+interface ApprovalDao {
+    @Query("SELECT * FROM pending_approvals ORDER BY timestamp DESC")
+    fun getAllApprovals(): Flow<List<ApprovalEntity>>
+
+    @Query("SELECT * FROM pending_approvals WHERE id = :id LIMIT 1")
+    suspend fun getApproval(id: String): ApprovalEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertApproval(approval: ApprovalEntity)
+
+    @Query("UPDATE pending_approvals SET status = :status, operatorSignature = :signature WHERE id = :id")
+    suspend fun updateApprovalStatus(id: String, status: String, signature: String)
+
+    @Query("DELETE FROM pending_approvals WHERE id = :id")
+    suspend fun deleteApproval(id: String)
+}

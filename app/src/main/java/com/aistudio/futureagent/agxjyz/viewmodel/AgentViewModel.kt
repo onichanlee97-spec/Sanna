@@ -12,6 +12,7 @@ import com.aistudio.futureagent.agxjyz.data.room.*
 import com.aistudio.futureagent.agxjyz.worker.AgentWorker
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 data class ChatMessage(
@@ -50,6 +51,7 @@ data class AgentUiState(
     val messages: List<ChatMessage> = emptyList(),
     val tasks: List<AgentTask> = emptyList(),
     val memories: List<UserMemory> = emptyList(),
+    val approvals: List<ApprovalEntity> = emptyList(),
     val pendingConfirmation: PendingConfirmation? = null,
     val isProcessing: Boolean = false,
     val isLiveDuplexActive: Boolean = false,
@@ -65,7 +67,13 @@ data class AgentUiState(
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
-    private val repository = AgentRepository(database.chatDao(), database.taskDao(), database.memoryDao(), database.vectorDao())
+    private val repository = AgentRepository(
+        database.chatDao(),
+        database.taskDao(),
+        database.memoryDao(),
+        database.vectorDao(),
+        database.approvalDao()
+    )
     private val voiceHelper = VoiceHelper(application)
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -228,6 +236,29 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 // Ignore flow error on startup
             }
         }
+
+        viewModelScope.launch {
+            try {
+                repository.allApprovals.collect { entities ->
+                    _uiState.update { it.copy(approvals = entities.filter { it.status == "PENDING" }) }
+                }
+            } catch (e: Throwable) {}
+        }
+    }
+
+    private suspend fun waitForApproval(approvalId: String): Boolean {
+        return repository.allApprovals
+            .map { list -> list.find { it.id == approvalId } }
+            .filterNotNull()
+            .filter { it.status != "PENDING" }
+            .first()
+            .status == "APPROVED"
+    }
+
+    fun resolveApproval(id: String, approved: Boolean) {
+        viewModelScope.launch {
+            repository.updateApprovalStatus(id, if (approved) "APPROVED" else "DENIED", "User_Operator")
+        }
     }
 
     fun toggleLiveDuplexMode() {
@@ -247,7 +278,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelPendingAction() {
+        val pending = _uiState.value.pendingConfirmation
         _uiState.update { it.copy(pendingConfirmation = null) }
+        pending?.let { resolveApproval(it.actionId, false) }
         viewModelScope.launch {
             repository.insertMessage(
                 ChatMessageEntity(System.currentTimeMillis().toString(), false, "🛡️ Agent Governance: High-risk action canceled by user authorization policy.")
@@ -844,40 +877,62 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
                         // Intercept high-risk actions for human-in-the-loop governance
                         if (toolName == "deleteFile" || toolName == "callCustomWebhook" || toolName == "shell_execution") {
+                            val description = when (toolName) {
+                                "deleteFile" -> "Deleting local storage file: '${args["filename"]}'"
+                                "callCustomWebhook" -> "Invoking external REST API: '${args["url"]}' with payload '${args["jsonPayload"]}'"
+                                "shell_execution" -> "Executing system shell command: '${args["command"]}'"
+                                else -> "High-risk tool execution request."
+                            }
+                            
+                            val approvalId = UUID.randomUUID().toString().substring(0, 8)
+                            val approval = ApprovalEntity(
+                                id = approvalId,
+                                actionName = toolName,
+                                payload = args.toString(),
+                                riskLevel = if (toolName == "shell_execution") "CRITICAL" else "HIGH",
+                                status = "PENDING"
+                            )
+                            repository.insertApproval(approval)
+
                             _uiState.update { state ->
                                 state.copy(
                                     isProcessing = false,
                                     pendingConfirmation = PendingConfirmation(
-                                        actionId = System.currentTimeMillis().toString(),
+                                        actionId = approvalId,
                                         toolName = toolName,
-                                        description = when (toolName) {
-                                            "deleteFile" -> "Deleting local storage file: '${args["filename"]}'"
-                                            "callCustomWebhook" -> "Invoking external REST API: '${args["url"]}' with payload '${args["jsonPayload"]}'"
-                                            "shell_execution" -> "Executing system shell command: '${args["command"]}'"
-                                            else -> "High-risk tool execution request."
-                                        },
-                                        onConfirm = {
-                                            viewModelScope.launch {
-                                                _uiState.update { it.copy(isProcessing = true) }
-                                                val res = when (toolName) {
-                                                    "deleteFile" -> SannaTools.deleteFile(getApplication(), args["filename"]?.toString() ?: "")
-                                                    "shell_execution" -> AdvancedAgentTools.executeAdvancedTool(getApplication(), repository, apiKey, "shell_execution", args)
-                                                    else -> {
-                                                        val url = args["url"]?.toString() ?: ""
-                                                        val method = args["method"]?.toString() ?: "POST"
-                                                        val payload = args["jsonPayload"]?.toString() ?: "{}"
-                                                        val auth = args["authHeader"]?.toString() ?: ""
-                                                        SannaTools.callCustomWebhook(url, method, payload, auth)
-                                                    }
-                                                }
-                                                repository.insertMessage(ChatMessageEntity(System.currentTimeMillis().toString(), false, "🛡️ Human-In-The-Loop Authorized Result:\n$res"))
-                                                _uiState.update { it.copy(isProcessing = false) }
-                                            }
-                                        }
+                                        description = description,
+                                        onConfirm = { resolveApproval(approvalId, true) }
                                     )
                                 )
                             }
-                            break
+
+                            val isApproved = waitForApproval(approvalId)
+                            _uiState.update { it.copy(isProcessing = true, pendingConfirmation = null) }
+                            
+                            if (!isApproved) {
+                                val result = "Action denied by operator guardrail."
+                                val part = Part(functionResponse = FunctionResponse(name = toolName, response = mapOf("content" to result)))
+                                currentConversationContents.add(Content(role = "model", parts = listOf(functionCallPart)))
+                                currentConversationContents.add(Content(role = "user", parts = listOf(part)))
+                                continue
+                            }
+
+                            val res = when (toolName) {
+                                "deleteFile" -> SannaTools.deleteFile(getApplication(), args["filename"]?.toString() ?: "")
+                                "shell_execution" -> AdvancedAgentTools.executeAdvancedTool(getApplication(), repository, apiKey, "shell_execution", args)
+                                else -> {
+                                    val url = args["url"]?.toString() ?: ""
+                                    val method = args["method"]?.toString() ?: "POST"
+                                    val payload = args["jsonPayload"]?.toString() ?: "{}"
+                                    val auth = args["authHeader"]?.toString() ?: ""
+                                    SannaTools.callCustomWebhook(url, method, payload, auth)
+                                }
+                            }
+                            
+                            val part = Part(functionResponse = FunctionResponse(name = toolName, response = mapOf("content" to res)))
+                            currentConversationContents.add(Content(role = "model", parts = listOf(functionCallPart)))
+                            currentConversationContents.add(Content(role = "user", parts = listOf(part)))
+                            continue
                         }
 
                         val toolResult = when (toolName) {

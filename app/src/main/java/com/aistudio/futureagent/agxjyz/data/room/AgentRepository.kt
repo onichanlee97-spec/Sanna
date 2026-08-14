@@ -6,11 +6,27 @@ class AgentRepository(
     private val chatDao: ChatDao,
     private val taskDao: TaskDao,
     private val memoryDao: MemoryDao,
-    private val vectorDao: VectorDao
+    private val vectorDao: VectorDao,
+    private val approvalDao: ApprovalDao
 ) {
     val allMessages: Flow<List<ChatMessageEntity>> = chatDao.getAllMessages()
     val allTasks: Flow<List<AgentTaskEntity>> = taskDao.getAllTasks()
     val allMemories: Flow<List<UserMemoryEntity>> = memoryDao.getAllMemories()
+    val allApprovals: Flow<List<ApprovalEntity>> = approvalDao.getAllApprovals()
+
+    suspend fun getApproval(id: String): ApprovalEntity? = approvalDao.getApproval(id)
+
+    suspend fun insertApproval(approval: ApprovalEntity) {
+        approvalDao.insertApproval(approval)
+    }
+
+    suspend fun updateApprovalStatus(id: String, status: String, signature: String) {
+        approvalDao.updateApprovalStatus(id, status, signature)
+    }
+
+    suspend fun deleteApproval(id: String) {
+        approvalDao.deleteApproval(id)
+    }
 
     suspend fun getAllVectors(): List<VectorEntity> = vectorDao.getAllVectors()
 

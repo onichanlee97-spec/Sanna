@@ -3,8 +3,10 @@ package com.aistudio.futureagent.agxjyz.data
 import android.content.Context
 import com.aistudio.futureagent.agxjyz.BuildConfig
 import com.aistudio.futureagent.agxjyz.data.room.AgentRepository
+import com.aistudio.futureagent.agxjyz.data.room.ApprovalEntity
 import com.aistudio.futureagent.agxjyz.data.room.VectorEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -13,13 +15,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.net.URLEncoder
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 object AdvancedAgentTools {
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
 
     suspend fun executeAdvancedTool(
         context: Context,
@@ -43,7 +52,7 @@ object AdvancedAgentTools {
                     "vision_analysis" -> {
                         val imageBase64 = args?.get("imageBase64")?.toString() ?: ""
                         val prompt = args?.get("prompt")?.toString() ?: "Describe this image."
-                        executeVisionAnalysis(apiKey, imageBase64, prompt)
+                        executeVisionAnalysis(context, apiKey, imageBase64, prompt)
                     }
                     "vector_store_add" -> {
                         val text = args?.get("text")?.toString() ?: ""
@@ -76,54 +85,94 @@ object AdvancedAgentTools {
     private suspend fun executeWebSearch(query: String, maxResults: Int): String {
         val tavilyKey = try { BuildConfig.TAVILY_API_KEY } catch (e: Exception) { "" }
         if (tavilyKey.isBlank() || tavilyKey == "TAVILY_API_KEY") {
-            // Fallback to DuckDuckGo if Tavily key is not set
             return searchDuckDuckGo(query)
         }
 
-        val json = JSONObject().apply {
-            put("query", query)
-            put("max_results", maxResults)
-            put("include_answer", true)
-        }
+        var attempt = 0
+        val maxRetries = 3
+        var lastError = ""
 
-        val request = Request.Builder()
-            .url("https://api.tavily.com/search")
-            .post(json.toString().toRequestBody("application/json".toMediaType()))
-            .addHeader("Authorization", "Bearer $tavilyKey")
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return "Web search failed: ${response.message}"
-            val body = response.body?.string() ?: return "Empty response"
-            val data = JSONObject(body)
-            val answer = data.optString("answer")
-            val results = data.optJSONArray("results")
-            
-            val sb = StringBuilder()
-            if (answer.isNotBlank()) sb.append("Answer: $answer\n\n")
-            if (results != null) {
-                for (i in 0 until results.length()) {
-                    val item = results.getJSONObject(i)
-                    sb.append("${i + 1}. ${item.getString("title")}\n")
-                    sb.append("   URL: ${item.getString("url")}\n")
-                    sb.append("   Snippet: ${item.getString("content")}\n\n")
+        while (attempt < maxRetries) {
+            try {
+                val json = JSONObject().apply {
+                    put("query", query)
+                    put("max_results", maxResults)
+                    put("include_answer", true)
                 }
+
+                val request = Request.Builder()
+                    .url("https://api.tavily.com/search")
+                    .post(json.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("Authorization", "Bearer $tavilyKey")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: return@use
+                        val data = JSONObject(body)
+                        val answer = data.optString("answer")
+                        val results = data.optJSONArray("results")
+                        
+                        val sb = StringBuilder()
+                        if (answer.isNotBlank() && answer != "null") sb.append("Answer: $answer\n\n")
+                        if (results != null) {
+                            for (i in 0 until results.length()) {
+                                val item = results.getJSONObject(i)
+                                sb.append("${i + 1}. ${item.getString("title")}\n")
+                                sb.append("   URL: ${item.getString("url")}\n")
+                                sb.append("   Snippet: ${item.getString("content")}\n\n")
+                            }
+                        }
+                        return sb.toString()
+                    } else if (response.code == 429 || response.code >= 500) {
+                        lastError = "HTTP ${response.code}: ${response.message}"
+                    } else {
+                        return "Web search failed: HTTP ${response.code} ${response.message}"
+                    }
+                }
+
+                if (lastError.isNotBlank()) {
+                    attempt++
+                    val waitTime = (2.0.pow(attempt.toDouble()) * 1000).toLong()
+                    delay(waitTime)
+                }
+            } catch (e: Exception) {
+                attempt++
+                if (attempt >= maxRetries) return "Web search failed after $maxRetries retries: ${e.localizedMessage}"
+                val waitTime = (2.0.pow(attempt.toDouble()) * 1000).toLong()
+                delay(waitTime)
+                lastError = e.localizedMessage ?: "Unknown error"
             }
-            return sb.toString()
         }
+        return "Web search failed after $maxRetries retries: $lastError"
     }
 
-    private suspend fun executeVisionAnalysis(apiKey: String, imageBase64: String, prompt: String): String {
-        val request = GeminiRequest(
-            contents = listOf(
-                Content(parts = listOf(
-                    Part(text = prompt),
-                    Part(inlineData = InlineData(mimeType = "image/jpeg", data = imageBase64.substringAfter(",")))
-                ))
+    private suspend fun executeVisionAnalysis(context: Context, apiKey: String, imageBase64: String, prompt: String): String {
+        var tempFile: File? = null
+        try {
+            if (imageBase64.isNotBlank()) {
+                // Cache image for processing safety
+                val data = android.util.Base64.decode(imageBase64.substringAfter(","), android.util.Base64.DEFAULT)
+                tempFile = File(context.cacheDir, "vision_cache_${System.currentTimeMillis()}.jpg")
+                tempFile.writeBytes(data)
+            }
+
+            val request = GeminiRequest(
+                contents = listOf(
+                    Content(parts = listOf(
+                        Part(text = prompt),
+                        Part(inlineData = InlineData(mimeType = "image/jpeg", data = imageBase64.substringAfter(",")))
+                    ))
+                )
             )
-        )
-        val response = RetrofitClient.api.generateContent("gemini-1.5-flash", apiKey, request)
-        return response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No vision analysis result."
+            val response = RetrofitClient.api.generateContent("gemini-1.5-flash", apiKey, request)
+            return response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No vision analysis result."
+        } finally {
+            // Cleanup temp file
+            try {
+                tempFile?.delete()
+            } catch (e: Exception) {}
+        }
     }
 
     private suspend fun vectorStoreAdd(repository: AgentRepository, apiKey: String, text: String, metadata: String): String {
@@ -167,10 +216,19 @@ object AdvancedAgentTools {
             normA += vecA[i] * vecA[i]
             normB += vecB[i] * vecB[i]
         }
+        if (normA == 0.0 || normB == 0.0) return 0.0
         return dotProduct / (sqrt(normA) * sqrt(normB))
     }
 
     private fun executeShellCommand(command: String): String {
+        // Security Guardrail: Block destructive patterns
+        val dangerousPatterns = listOf("rm -rf", "mkfs", "> /dev/sd", "dd if=", "chmod 777", "chown", "shutdown", "reboot")
+        for (pattern in dangerousPatterns) {
+            if (command.contains(pattern)) {
+                return "Security Guardrail: Command blocked due to destructive matching patterns ('$pattern')."
+            }
+        }
+
         return try {
             val process = Runtime.getRuntime().exec(command)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -299,5 +357,19 @@ object AdvancedAgentTools {
         val amountInUsd = amount / fromRate
         val converted = amountInUsd * toRate
         return "$amount $from = ${String.format("%.2f", converted)} $to"
+    }
+
+    // HITL Persistence Helper
+    suspend fun createApproval(repository: AgentRepository, actionName: String, payload: String, riskLevel: String): String {
+        val approvalId = UUID.randomUUID().toString().substring(0, 8)
+        val approval = ApprovalEntity(
+            id = approvalId,
+            actionName = actionName,
+            payload = payload,
+            riskLevel = riskLevel,
+            status = "PENDING"
+        )
+        repository.insertApproval(approval)
+        return approvalId
     }
 }

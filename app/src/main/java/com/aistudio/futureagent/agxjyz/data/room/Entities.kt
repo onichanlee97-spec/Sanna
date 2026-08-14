@@ -37,3 +37,14 @@ data class VectorEntity(
     val embedding: List<Float>,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "pending_approvals")
+data class ApprovalEntity(
+    @PrimaryKey val id: String,
+    val actionName: String,
+    val payload: String,
+    val riskLevel: String,
+    val status: String, // PENDING, APPROVED, DENIED
+    val operatorSignature: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)
