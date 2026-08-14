@@ -53,3 +53,15 @@ interface MemoryDao {
     @Query("DELETE FROM user_memories")
     suspend fun clearMemories()
 }
+
+@Dao
+interface VectorDao {
+    @Query("SELECT * FROM vector_store")
+    suspend fun getAllVectors(): List<VectorEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVector(vector: VectorEntity)
+
+    @Query("DELETE FROM vector_store")
+    suspend fun clearVectors()
+}

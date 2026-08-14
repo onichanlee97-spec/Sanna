@@ -79,6 +79,21 @@ data class Candidate(
     val content: Content?
 )
 
+@JsonClass(generateAdapter = true)
+data class EmbeddingRequest(
+    val content: Content
+)
+
+@JsonClass(generateAdapter = true)
+data class EmbeddingResponse(
+    val embedding: EmbeddingValue
+)
+
+@JsonClass(generateAdapter = true)
+data class EmbeddingValue(
+    val values: List<Float>
+)
+
 interface GeminiApiService {
     @POST("v1beta/models/{model}:generateContent")
     suspend fun generateContent(
@@ -86,6 +101,13 @@ interface GeminiApiService {
         @Query("key") apiKey: String,
         @Body request: GeminiRequest
     ): GeminiResponse
+
+    @POST("v1beta/models/{model}:embedContent")
+    suspend fun embedContent(
+        @Path("model") modelName: String,
+        @Query("key") apiKey: String,
+        @Body request: EmbeddingRequest
+    ): EmbeddingResponse
 }
 
 object RetrofitClient {

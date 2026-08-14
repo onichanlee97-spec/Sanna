@@ -28,3 +28,12 @@ data class UserMemoryEntity(
     val category: String = "General",
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "vector_store")
+data class VectorEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val content: String,
+    val metadata: String,
+    val embedding: List<Float>,
+    val timestamp: Long = System.currentTimeMillis()
+)

@@ -65,7 +65,7 @@ data class AgentUiState(
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
-    private val repository = AgentRepository(database.chatDao(), database.taskDao(), database.memoryDao())
+    private val repository = AgentRepository(database.chatDao(), database.taskDao(), database.memoryDao(), database.vectorDao())
     private val voiceHelper = VoiceHelper(application)
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -731,6 +731,65 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                             "properties" to mapOf("expression" to mapOf("type" to "STRING", "description" to "Math expression")),
                             "required" to listOf("expression")
                         )
+                    ),
+                    FunctionDeclaration(
+                        name = "web_search",
+                        description = "Search the live internet for real-time information using Tavily or DuckDuckGo.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "query" to mapOf("type" to "STRING", "description" to "Search query"),
+                                "maxResults" to mapOf("type" to "INTEGER", "description" to "Number of results to return (default 5)")
+                            ),
+                            "required" to listOf("query")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "vision_analysis",
+                        description = "Analyze an image (from screenshot or camera) using multimodal vision models.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "prompt" to mapOf("type" to "STRING", "description" to "Analysis prompt e.g. Describe this image"),
+                                "imageBase64" to mapOf("type" to "STRING", "description" to "Base64 encoded image data (optional if image was just sent)")
+                            ),
+                            "required" to listOf("prompt")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "vector_store_add",
+                        description = "Add text content to the local semantic vector database for later retrieval (RAG).",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "text" to mapOf("type" to "STRING", "description" to "Text content to index"),
+                                "metadata" to mapOf("type" to "STRING", "description" to "Optional JSON metadata")
+                            ),
+                            "required" to listOf("text")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "vector_store_query",
+                        description = "Query the local semantic vector database using natural language similarity search.",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "query" to mapOf("type" to "STRING", "description" to "Search query"),
+                                "topK" to mapOf("type" to "INTEGER", "description" to "Number of matches (default 3)")
+                            ),
+                            "required" to listOf("query")
+                        )
+                    ),
+                    FunctionDeclaration(
+                        name = "shell_execution",
+                        description = "Execute a native system shell command securely (requires explicit user authorization).",
+                        parameters = mapOf(
+                            "type" to "OBJECT",
+                            "properties" to mapOf(
+                                "command" to mapOf("type" to "STRING", "description" to "Shell command to run")
+                            ),
+                            "required" to listOf("command")
+                        )
                     )
                 ))
 
@@ -784,7 +843,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                         val args = call.args ?: emptyMap()
 
                         // Intercept high-risk actions for human-in-the-loop governance
-                        if (toolName == "deleteFile" || toolName == "callCustomWebhook") {
+                        if (toolName == "deleteFile" || toolName == "callCustomWebhook" || toolName == "shell_execution") {
                             _uiState.update { state ->
                                 state.copy(
                                     isProcessing = false,
@@ -794,6 +853,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                                         description = when (toolName) {
                                             "deleteFile" -> "Deleting local storage file: '${args["filename"]}'"
                                             "callCustomWebhook" -> "Invoking external REST API: '${args["url"]}' with payload '${args["jsonPayload"]}'"
+                                            "shell_execution" -> "Executing system shell command: '${args["command"]}'"
                                             else -> "High-risk tool execution request."
                                         },
                                         onConfirm = {
@@ -801,6 +861,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                                                 _uiState.update { it.copy(isProcessing = true) }
                                                 val res = when (toolName) {
                                                     "deleteFile" -> SannaTools.deleteFile(getApplication(), args["filename"]?.toString() ?: "")
+                                                    "shell_execution" -> AdvancedAgentTools.executeAdvancedTool(getApplication(), repository, apiKey, "shell_execution", args)
                                                     else -> {
                                                         val url = args["url"]?.toString() ?: ""
                                                         val method = args["method"]?.toString() ?: "POST"
@@ -881,7 +942,12 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                                     SannaTools.getNotifications().joinToString("\n") { "[${it.appName}] ${it.title}: ${it.text}" }
                                 }
                             }
-                            "calculator" -> AdvancedAgentTools.executeAdvancedTool("calculator", args)
+                            "calculator", "web_search", "vision_analysis", "vector_store_add", "vector_store_query" -> {
+                                val finalArgs = if (toolName == "vision_analysis" && (args["imageBase64"] == null || args["imageBase64"] == "")) {
+                                    args.toMutableMap().apply { put("imageBase64", imageBase64 ?: "") }
+                                } else args
+                                AdvancedAgentTools.executeAdvancedTool(getApplication(), repository, apiKey, toolName, finalArgs)
+                            }
                             "searchWikipedia" -> AgentTools.executeTool("search", args["query"]?.toString() ?: "")
                             "fetchWeather" -> AgentTools.executeTool("weather", args["location"]?.toString() ?: "New York")
                             "sendWhatsAppMessage" -> {

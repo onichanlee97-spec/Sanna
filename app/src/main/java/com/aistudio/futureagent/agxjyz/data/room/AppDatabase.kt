@@ -5,11 +5,17 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [ChatMessageEntity::class, AgentTaskEntity::class, UserMemoryEntity::class], version = 2, exportSchema = false)
+@Database(
+    entities = [ChatMessageEntity::class, AgentTaskEntity::class, UserMemoryEntity::class, VectorEntity::class],
+    version = 3,
+    exportSchema = false
+)
+@androidx.room.TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun taskDao(): TaskDao
     abstract fun memoryDao(): MemoryDao
+    abstract fun vectorDao(): VectorDao
 
     companion object {
         @Volatile
