@@ -204,15 +204,17 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                             var success = false
                                             
                                             val preferredModel = com.aistudio.futureagent.agxjyz.data.SecureStorage.getSelectedModel(context)
-                                            val fallbackModels = listOf(preferredModel, "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-1.5-flash").distinct()
+                                            val fallbackModels = listOf(preferredModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro").distinct()
                                             var currentModelIndex = 0
                                             
                                             while (attempt < maxAttempts && !success) {
                                                 try {
                                                     attempt++
-                                                    var apiKey = com.aistudio.futureagent.agxjyz.data.SecureStorage.getApiKey(context)
+                                                    val apiKey = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.getEffectiveApiKey(context)
                                                     if (apiKey.isBlank()) {
-                                                        apiKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+                                                        analysisResult = "No API key configured. Please enter your API key in Settings or AI Studio Secrets."
+                                                        success = true
+                                                        break
                                                     }
                                                     val model = fallbackModels[currentModelIndex]
                                                     
@@ -234,39 +236,40 @@ fun VisionScreen(onOpenDrawer: () -> Unit) {
                                                     val response = com.aistudio.futureagent.agxjyz.api.RetrofitClient.service.generateContent(model, apiKey, request)
                                                     val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No objects or text detected."
                                                     analysisResult = if (currentModelIndex > 0) {
-                                                        "(Fallback to $model)\n$text"
+                                                        "(Model: $model)\n$text"
                                                     } else {
                                                         text
                                                     }
                                                     success = true
                                                 } catch (e: retrofit2.HttpException) {
-                                                    if (e.code() == 429 && currentModelIndex < fallbackModels.size - 1) {
-                                                        // Quota exceeded for current model, fallback to next
+                                                    if ((e.code() == 429 || e.code() == 404 || e.code() == 400) && currentModelIndex < fallbackModels.size - 1) {
                                                         currentModelIndex++
-                                                        attempt-- // don't count fallback as a retry limit against maxAttempts if we want 3 tries per model? Or just keep it. Let's just let attempt increase, but maybe reset it?
-                                                        // Actually, let's just reset attempt for the new model
                                                         attempt = 0
-                                                        delay(500L)
+                                                        delay(300L)
                                                     } else if (e.code() == 503 && attempt < maxAttempts) {
-                                                        // Server overloaded, wait and retry
-                                                        delay(1500L * attempt)
+                                                        delay(1000L * attempt)
                                                     } else {
                                                         val errorBody = e.response()?.errorBody()?.string() ?: "No error body"
-                                                        // Use clean fallback messages for common HTTP errors
                                                         if (e.code() == 503) {
                                                             analysisResult = "Analysis failed: The AI model is currently experiencing high demand. Please try again later."
                                                         } else if (e.code() == 429) {
-                                                            analysisResult = "Analysis failed: API quota exceeded across all fallback models. Please wait a minute or check your billing details."
+                                                            analysisResult = "Analysis failed: API quota exceeded across fallback models. Please wait a minute or check your key."
                                                         } else if (e.code() == 400) {
-                                                            analysisResult = "Analysis failed: Invalid request or API key. Please verify your Gemini API key in settings."
+                                                            analysisResult = "Analysis failed: Invalid request or API key. Please verify your API key in settings."
                                                         } else {
                                                             analysisResult = "Analysis failed: HTTP ${e.code()} - $errorBody"
                                                         }
-                                                        success = true // Break loop on non-retriable error or max retries
+                                                        success = true
                                                     }
                                                 } catch (e: Exception) {
-                                                    analysisResult = "Analysis failed: ${e.message}"
-                                                    success = true // Break loop on generic exception
+                                                    if (currentModelIndex < fallbackModels.size - 1) {
+                                                        currentModelIndex++
+                                                        attempt = 0
+                                                        delay(300L)
+                                                    } else {
+                                                        analysisResult = "Analysis failed: ${e.message}"
+                                                        success = true
+                                                    }
                                                 }
                                             }
                                         }

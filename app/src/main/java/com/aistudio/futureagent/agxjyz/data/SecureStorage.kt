@@ -15,25 +15,20 @@ object SecureStorage {
     private const val KEY_CUSTOM_PROMPT = "custom_system_prompt"
 
     val AVAILABLE_MODELS = listOf(
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.5-flash",
-        "gemini-3.1-pro-preview",
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash-preview",
         "gemini-2.5-flash",
-        "gemini-2.5-pro",
+        "gemini-2.0-flash",
         "gemini-1.5-flash",
+        "gemini-2.5-pro",
         "gemini-1.5-pro",
         "llama-3.3-70b-instruct",
-        "llama-3.1-405b-instruct",
         "llama-3.1-70b-instruct",
         "llama-3.1-8b-instruct",
-        "llama-3.2-11b-vision-instruct",
         "llama-3.2-3b-instruct",
+        "llama-3.2-1b-instruct",
         "gpt-4o",
         "gpt-4o-mini",
-        "claude-3-5-sonnet-20241022"
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022"
     )
 
     fun getAvailableModels(context: Context): List<String> {
@@ -42,7 +37,7 @@ object SecureStorage {
         } catch (e: Exception) {
             emptyList()
         }
-        return (discovered + AVAILABLE_MODELS).distinct()
+        return (AVAILABLE_MODELS + discovered).distinct()
     }
 
     fun getModelDisplayName(modelId: String): String {
@@ -128,12 +123,29 @@ object SecureStorage {
         }
     }
 
+    private fun getStandardPrefs(context: Context): SharedPreferences {
+        return context.getSharedPreferences("sanna_standard_prefs", Context.MODE_PRIVATE)
+    }
+
     fun saveSelectedModel(context: Context, model: String) {
-        getPrefs(context).edit().putString(KEY_SELECTED_MODEL, model).apply()
+        val validModel = if (model == "gemini-3.6-flash" || model == "gemini-3.5-flash" || model == "gemini-3.5-flash-lite") {
+            "gemini-2.5-flash"
+        } else {
+            model
+        }
+        getPrefs(context).edit().putString(KEY_SELECTED_MODEL, validModel).apply()
+        getStandardPrefs(context).edit().putString(KEY_SELECTED_MODEL, validModel).apply()
     }
 
     fun getSelectedModel(context: Context): String {
-        return getPrefs(context).getString(KEY_SELECTED_MODEL, "gemini-3.6-flash") ?: "gemini-3.6-flash"
+        val model = getPrefs(context).getString(KEY_SELECTED_MODEL, null)
+            ?: getStandardPrefs(context).getString(KEY_SELECTED_MODEL, "gemini-2.5-flash")
+            ?: "gemini-2.5-flash"
+        return if (model == "gemini-3.6-flash" || model == "gemini-3.5-flash" || model == "gemini-3.5-flash-lite") {
+            "gemini-2.5-flash"
+        } else {
+            model
+        }
     }
 
     fun savePersona(context: Context, persona: String) {
@@ -153,11 +165,26 @@ object SecureStorage {
     }
 
     fun saveApiKey(context: Context, key: String) {
-        getPrefs(context).edit().putString(KEY_API_KEY, key).apply()
+        try {
+            getPrefs(context).edit().putString(KEY_API_KEY, key.trim()).apply()
+        } catch (e: Exception) {}
+        getStandardPrefs(context).edit().putString(KEY_API_KEY, key.trim()).apply()
     }
 
     fun getApiKey(context: Context): String {
-        return getPrefs(context).getString(KEY_API_KEY, "") ?: ""
+        val encryptedKey = try {
+            getPrefs(context).getString(KEY_API_KEY, "") ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        if (encryptedKey.isNotBlank() && encryptedKey != "MY_GEMINI_API_KEY") {
+            return encryptedKey.trim()
+        }
+        val standardKey = getStandardPrefs(context).getString(KEY_API_KEY, "") ?: ""
+        if (standardKey.isNotBlank() && standardKey != "MY_GEMINI_API_KEY") {
+            return standardKey.trim()
+        }
+        return ""
     }
 
     fun saveOAuthToken(context: Context, token: String) {

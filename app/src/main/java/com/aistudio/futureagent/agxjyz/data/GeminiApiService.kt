@@ -134,29 +134,24 @@ object GeminiFallbackExecutor {
         onFallbackTriggered: ((fromModelOrProvider: String, toModelOrProvider: String) -> Unit)? = null
     ): GeminiResponse {
         val apiKeyManager = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager(context)
-        val allKeys = apiKeyManager.getAllKeys()
-        val hasMultiKeys = allKeys.isNotEmpty()
-
-        val keysToTry = if (hasMultiKeys) {
-            val currentIndex = apiKeyManager.getCurrentKeyIndex().coerceIn(0, (allKeys.size - 1).coerceAtLeast(0))
-            // Start from currentIndex and cycle around
-            val rotated = mutableListOf<Pair<Int, String>>()
-            for (i in 0 until allKeys.size) {
-                val idx = (currentIndex + i) % allKeys.size
-                rotated.add(Pair(idx, allKeys[idx]))
-            }
-            rotated
+        val effectiveKeys = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.getEffectiveKeys(context)
+        val allKeys = if (effectiveKeys.isNotEmpty()) {
+            effectiveKeys
+        } else if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
+            listOf(apiKey)
         } else {
-            val fallback = if (apiKey.isNotBlank()) apiKey else SecureStorage.getApiKey(context)
-            if (fallback.isNotBlank() && fallback != "MY_GEMINI_API_KEY") {
-                listOf(Pair(0, fallback))
-            } else {
-                emptyList()
-            }
+            emptyList()
         }
 
-        if (keysToTry.isEmpty()) {
-            throw RuntimeException("No API key configured. Please import an API key.")
+        if (allKeys.isEmpty()) {
+            throw RuntimeException("No valid API key configured. Please enter your API key in settings or AI Studio.")
+        }
+
+        val currentIndex = apiKeyManager.getCurrentKeyIndex().coerceIn(0, (allKeys.size - 1).coerceAtLeast(0))
+        val keysToTry = mutableListOf<Pair<Int, String>>()
+        for (i in 0 until allKeys.size) {
+            val idx = (currentIndex + i) % allKeys.size
+            keysToTry.add(Pair(idx, allKeys[idx]))
         }
 
         var lastException: Exception? = null
@@ -173,7 +168,7 @@ object GeminiFallbackExecutor {
                 try {
                     val response = executeProviderCall(providerName, currentKey, model, request)
                     // If successful and we had to rotate keys/models, update active index & model
-                    if (hasMultiKeys && apiKeyManager.getCurrentKeyIndex() != keyIndex) {
+                    if (allKeys.size > 1 && apiKeyManager.getCurrentKeyIndex() != keyIndex) {
                         apiKeyManager.setActiveKeyIndex(keyIndex)
                     }
                     SecureStorage.saveSelectedModel(context, model)
@@ -181,33 +176,26 @@ object GeminiFallbackExecutor {
                 } catch (e: Exception) {
                     lastException = e
                     val isQuota = isQuotaException(e)
-                    if (isQuota) {
-                        // Check if there is a next model for this provider
-                        val nextModel = modelsForProvider.getOrNull(modelIndex + 1)
-                        if (nextModel != null) {
-                            onFallbackTriggered?.invoke(
-                                "$providerName ($model)",
-                                "$providerName ($nextModel) [Quota auto-fallback]"
-                            )
-                        } else {
-                            // Provider exhausted, falling back to next provider key
-                            val nextKeyPair = keysToTry.getOrNull(keyPairIndex + 1)
-                            if (nextKeyPair != null) {
-                                val nextProvider = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(nextKeyPair.second)
-                                onFallbackTriggered?.invoke(
-                                    "$providerName Key #${keyIndex + 1} (Quota Limit Reached)",
-                                    "Next Active LLM Provider: $nextProvider (Key #${nextKeyPair.first + 1})"
-                                )
-                            }
-                        }
+                    
+                    // Check if there is a next model for this provider to failover to
+                    val nextModel = modelsForProvider.getOrNull(modelIndex + 1)
+                    if (nextModel != null) {
+                        val reason = if (isQuota) "Quota auto-fallback" else "Model failover (${e.message?.take(25)})"
+                        onFallbackTriggered?.invoke(
+                            "$providerName ($model)",
+                            "$providerName ($nextModel) [$reason]"
+                        )
+                        // Continue to try next model with same key
+                        continue
                     } else {
-                        // If it's a non-quota fatal error and there are more keys, also try next key
+                        // Provider exhausted, falling back to next provider key
                         val nextKeyPair = keysToTry.getOrNull(keyPairIndex + 1)
                         if (nextKeyPair != null) {
                             val nextProvider = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.detectProvider(nextKeyPair.second)
+                            val reason = if (isQuota) "Quota limit reached" else "Error (${e.message?.take(25)})"
                             onFallbackTriggered?.invoke(
-                                "$providerName Key #${keyIndex + 1} (Error: ${e.message?.take(30)})",
-                                "Failover Provider: $nextProvider (Key #${nextKeyPair.first + 1})"
+                                "$providerName Key #${keyIndex + 1} ($reason)",
+                                "Next Active LLM Provider: $nextProvider (Key #${nextKeyPair.first + 1})"
                             )
                         }
                     }
@@ -215,7 +203,7 @@ object GeminiFallbackExecutor {
             }
         }
 
-        throw lastException ?: RuntimeException("All configured LLM providers and API keys reached quota limits.")
+        throw lastException ?: RuntimeException("All configured LLM providers and API keys failed to return a response.")
     }
 
     private fun getModelsForProvider(provider: String, currentSelected: String): List<String> {
@@ -232,26 +220,30 @@ object GeminiFallbackExecutor {
             }
             "Anthropic" -> listOf(
                 "claude-3-5-sonnet-20241022",
-                "claude-3-haiku-20240307",
+                "claude-3-5-haiku-20241022",
                 "claude-3-opus-20240229"
             )
             "OpenAI" -> {
-                val list = listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo")
+                val list = listOf("gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo")
                 if (list.contains(currentSelected)) listOf(currentSelected) + list.filter { it != currentSelected } else list
             }
             "Groq" -> listOf(
                 "llama-3.3-70b-versatile",
-                "llama-3.1-70b-specdec",
                 "llama-3.1-8b-instant",
                 "mixtral-8x7b-32768"
             )
             else -> {
                 // Gemini & default
-                val defaultModels = SecureStorage.AVAILABLE_MODELS.filter { it.startsWith("gemini") }
-                if (defaultModels.contains(currentSelected)) {
-                    listOf(currentSelected) + defaultModels.filter { it != currentSelected }
+                val standardGemini = listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro")
+                val cleanSelected = if (currentSelected == "gemini-3.6-flash" || currentSelected == "gemini-3.5-flash" || currentSelected == "gemini-3.5-flash-lite") {
+                    "gemini-2.5-flash"
                 } else {
-                    listOf("gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash")
+                    currentSelected
+                }
+                if (standardGemini.contains(cleanSelected)) {
+                    listOf(cleanSelected) + standardGemini.filter { it != cleanSelected }
+                } else {
+                    standardGemini
                 }
             }
         }

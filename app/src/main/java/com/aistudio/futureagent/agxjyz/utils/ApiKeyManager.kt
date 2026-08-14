@@ -31,6 +31,37 @@ class ApiKeyManager(private val context: Context) {
                 else -> "Custom / LLM"
             }
         }
+
+        fun getEffectiveApiKey(context: Context): String {
+            val manager = ApiKeyManager(context)
+            val current = manager.getCurrentApiKey()
+            if (current.isNotBlank() && current != "MY_GEMINI_API_KEY") {
+                return current
+            }
+            val secure = SecureStorage.getApiKey(context)
+            if (secure.isNotBlank() && secure != "MY_GEMINI_API_KEY") {
+                return secure
+            }
+            val buildConfigKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+            if (buildConfigKey.isNotBlank() && buildConfigKey != "MY_GEMINI_API_KEY") {
+                return buildConfigKey
+            }
+            return ""
+        }
+
+        fun getEffectiveKeys(context: Context): List<String> {
+            val manager = ApiKeyManager(context)
+            val list = manager.getAllKeys().filter { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }.toMutableList()
+            val secure = SecureStorage.getApiKey(context)
+            if (secure.isNotBlank() && secure != "MY_GEMINI_API_KEY" && !list.contains(secure)) {
+                list.add(secure)
+            }
+            val buildConfigKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+            if (buildConfigKey.isNotBlank() && buildConfigKey != "MY_GEMINI_API_KEY" && !list.contains(buildConfigKey)) {
+                list.add(buildConfigKey)
+            }
+            return list
+        }
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -44,10 +75,13 @@ class ApiKeyManager(private val context: Context) {
     private fun loadKeys() {
         val savedKeys = prefs.getString(KEY_CUSTOM_KEYS, "") ?: ""
         if (savedKeys.isBlank()) {
-            // Check if there is already a single key in SecureStorage
             val fallbackKey = SecureStorage.getApiKey(context)
+            val buildConfigKey = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
             if (fallbackKey.isNotBlank() && fallbackKey != "MY_GEMINI_API_KEY") {
                 apiKeys = mutableListOf(fallbackKey)
+                persistKeys()
+            } else if (buildConfigKey.isNotBlank() && buildConfigKey != "MY_GEMINI_API_KEY") {
+                apiKeys = mutableListOf(buildConfigKey)
                 persistKeys()
             } else {
                 apiKeys = mutableListOf()
@@ -69,7 +103,7 @@ class ApiKeyManager(private val context: Context) {
         
         // Sync active key to SecureStorage
         val active = getCurrentApiKey()
-        if (active.isNotBlank()) {
+        if (active.isNotBlank() && active != "MY_GEMINI_API_KEY") {
             SecureStorage.saveApiKey(context, active)
         }
     }
@@ -77,6 +111,13 @@ class ApiKeyManager(private val context: Context) {
     @Synchronized
     fun getAllKeys(): List<String> {
         loadKeys()
+        if (apiKeys.isEmpty()) {
+            val fallback = getEffectiveApiKey(context)
+            if (fallback.isNotBlank()) {
+                apiKeys.add(fallback)
+                persistKeys()
+            }
+        }
         return apiKeys.toList()
     }
 
@@ -84,7 +125,11 @@ class ApiKeyManager(private val context: Context) {
     fun getCurrentApiKey(): String {
         loadKeys()
         if (apiKeys.isEmpty()) {
-            return SecureStorage.getApiKey(context)
+            val sec = SecureStorage.getApiKey(context)
+            if (sec.isNotBlank() && sec != "MY_GEMINI_API_KEY") return sec
+            val bc = com.aistudio.futureagent.agxjyz.BuildConfig.GEMINI_API_KEY
+            if (bc.isNotBlank() && bc != "MY_GEMINI_API_KEY") return bc
+            return ""
         }
         var index = prefs.getInt(KEY_CURRENT_INDEX, 0)
         if (index >= apiKeys.size || index < 0) {

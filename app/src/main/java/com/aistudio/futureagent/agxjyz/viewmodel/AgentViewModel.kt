@@ -488,8 +488,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             repository.insertTask(AgentTaskEntity(planId3, "Synthesize Response", "QUEUED", "Reasoning"))
 
             try {
-                val secureKey = SecureStorage.getApiKey(getApplication())
-                val apiKey = if (secureKey.isNotBlank()) secureKey else BuildConfig.GEMINI_API_KEY
+                val apiKey = com.aistudio.futureagent.agxjyz.utils.ApiKeyManager.getEffectiveApiKey(getApplication())
                 if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
                     val executor = AgentExecutor(getApplication())
                     executor.executeTask(prompt, object : AgentExecutor.AgentCallback {
@@ -1333,10 +1332,18 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 val errorMsgId = (System.currentTimeMillis() + 1).toString()
+                val finalOutput = if (e.message != null && e.message!!.contains("quota", ignoreCase = true)) {
+                    "⚠️ **Quota Limit Warning**: ${e.message}\n\n$offlineReply"
+                } else if (e.message != null && (e.message!!.contains("404") || e.message!!.contains("400") || e.message!!.contains("API key"))) {
+                    "⚠️ **API Configuration Notice**: ${e.message}\n\n$offlineReply"
+                } else {
+                    offlineReply
+                }
+
                 repository.insertMessage(
-                    ChatMessageEntity(errorMsgId, false, offlineReply)
+                    ChatMessageEntity(errorMsgId, false, finalOutput)
                 )
-                voiceHelper.speak(offlineReply)
+                voiceHelper.speak(finalOutput)
                 _uiState.update { it.copy(isProcessing = false) }
             }
         }
