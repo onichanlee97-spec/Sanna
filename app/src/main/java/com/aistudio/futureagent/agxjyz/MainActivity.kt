@@ -9,13 +9,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -53,6 +56,111 @@ fun DrawerItemLabel(item: DrawerItemData, isSelected: Boolean) {
             style = MaterialTheme.typography.labelSmall,
             color = if (isSelected) NeonCyan.copy(alpha = 0.7f) else Color.Gray
         )
+    }
+}
+
+@Composable
+fun SannaDrawerContent(
+    drawerState: DrawerState,
+    scope: kotlinx.coroutines.CoroutineScope,
+    drawerItems: List<DrawerItemData>,
+    currentTab: Int,
+    onTabSelected: (Int) -> Unit,
+    state: com.aistudio.futureagent.agxjyz.viewmodel.AgentUiState,
+    onClearMemory: () -> Unit
+) {
+    ModalDrawerSheet(
+        drawerContainerColor = Color(0xFF07131D),
+        drawerContentColor = Color.White,
+        modifier = Modifier.width(310.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.aistudio.futureagent.agxjyz.R.drawable.img_hero_sanna),
+                    contentDescription = "Drawer Hero",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+                Spacer(Modifier.height(16.dp))
+                Text("SANNA AGENT", style = MaterialTheme.typography.headlineMedium, color = NeonCyan)
+                Text("Autonomous Voice & AI Workspace", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+
+                Spacer(Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        onTabSelected(1)
+                        onClearMemory()
+                        scope.launch { drawerState.close() }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, NeonCyan),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "New Session", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("New Chat Session")
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = Color(0xFF1E3A4C))
+                Spacer(Modifier.height(12.dp))
+
+                drawerItems.forEach { item ->
+                    val isSelected = (currentTab == item.id)
+                    NavigationDrawerItem(
+                        label = {
+                            DrawerItemLabel(item, isSelected)
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = item.icon,
+                                contentDescription = item.title,
+                                tint = if (isSelected) NeonCyan else Color.Gray
+                            )
+                        },
+                        selected = isSelected,
+                        onClick = {
+                            onTabSelected(item.id)
+                            scope.launch { drawerState.close() }
+                        },
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = Color(0xFF0F2B3C),
+                            unselectedContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                HorizontalDivider(color = Color(0xFF1E3A4C))
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        com.aistudio.futureagent.agxjyz.data.SecureStorage.getModelDisplayName(state.selectedModel),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                    Badge(containerColor = NeonCyan, contentColor = Color.Black) {
+                        Text("ONLINE", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -108,86 +216,15 @@ class MainActivity : FragmentActivity() {
                     drawerState = drawerState,
                     gesturesEnabled = true,
                     drawerContent = {
-                        ModalDrawerSheet(
-                            drawerContainerColor = Color(0xFF07131D),
-                            drawerContentColor = Color.White,
-                            modifier = Modifier.width(310.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .padding(16.dp),
-                                verticalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Spacer(Modifier.height(8.dp))
-                                    Text("SANNA AGENT", style = MaterialTheme.typography.headlineMedium, color = NeonCyan)
-                                    Text("Autonomous Voice & AI Workspace", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-
-                                    Spacer(Modifier.height(16.dp))
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            tab = 1
-                                            viewModel.clearMemory()
-                                            scope.launch { drawerState.close() }
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        border = BorderStroke(1.dp, NeonCyan),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "New Session", modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("New Chat Session")
-                                    }
-
-                                    Spacer(Modifier.height(16.dp))
-                                    Divider(color = Color(0xFF1E3A4C))
-                                    Spacer(Modifier.height(12.dp))
-
-                                    drawerItems.forEach { item ->
-                                        val isSelected = (tab == item.id)
-                                        NavigationDrawerItem(
-                                            label = {
-                                                DrawerItemLabel(item, isSelected)
-                                            },
-                                            icon = {
-                                                Icon(
-                                                    imageVector = item.icon,
-                                                    contentDescription = item.title,
-                                                    tint = if (isSelected) NeonCyan else Color.Gray
-                                                )
-                                            },
-                                            selected = isSelected,
-                                            onClick = {
-                                                tab = item.id
-                                                scope.launch { drawerState.close() }
-                                            },
-                                            colors = NavigationDrawerItemDefaults.colors(
-                                                selectedContainerColor = Color(0xFF0F2B3C),
-                                                unselectedContainerColor = Color.Transparent
-                                            ),
-                                            modifier = Modifier.padding(vertical = 2.dp)
-                                        )
-                                    }
-                                }
-
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Divider(color = Color(0xFF1E3A4C))
-                                    Spacer(Modifier.height(8.dp))
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(com.aistudio.futureagent.agxjyz.data.SecureStorage.getModelDisplayName(state.selectedModel), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                        Badge(containerColor = NeonCyan, contentColor = Color.Black) {
-                                            Text("ONLINE", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        SannaDrawerContent(
+                            drawerState = drawerState,
+                            scope = scope,
+                            drawerItems = drawerItems,
+                            currentTab = tab,
+                            onTabSelected = { tab = it },
+                            state = state,
+                            onClearMemory = { viewModel.clearMemory() }
+                        )
                     }
                 ) {
                     Surface(color = Color(0xFF060D14), modifier = Modifier.fillMaxSize()) {

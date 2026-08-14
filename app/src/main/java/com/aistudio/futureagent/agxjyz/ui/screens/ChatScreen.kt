@@ -206,6 +206,17 @@ fun ChatScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
+                        Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.aistudio.futureagent.agxjyz.R.drawable.img_hero_sanna),
+                            contentDescription = "Sanna Hero Banner",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .border(1.dp, NeonCyan.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                        Spacer(Modifier.height(24.dp))
                         AgentOrb()
                         Spacer(Modifier.height(16.dp))
                         Text(
